@@ -40,7 +40,14 @@
               pname = "fb";
               version = "0.0.1";
 
-              src = ./.;
+              src = lib.fileset.toSource {
+                root = ./.;
+                fileset = lib.fileset.unions [
+                  ./build.zig
+                  ./build.zig.zon
+                  ./src
+                ];
+              };
 
               nativeBuildInputs = [zig.hook];
 
