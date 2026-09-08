@@ -45,7 +45,7 @@ fn run(
 ) !u8 {
     const args = try process_args.toSlice(arena);
     if (args.len < 2) {
-        try stderr.writeAll("Usage: file_bash '<command>'\n");
+        try stderr.writeAll("Usage: fb '<command>'\n");
         return 2;
     }
 

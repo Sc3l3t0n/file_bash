@@ -4,7 +4,7 @@ Run a shell command and save its output to files:
 
 ```sh
 zig build
-./zig-out/bin/file_bash 'echo hello; echo error >&2; exit 7'
+./zig-out/bin/fb 'echo hello; echo error >&2; exit 7'
 ```
 
 The first argument is executed by `sh -c` on Linux/macOS and
@@ -16,7 +16,7 @@ are `sh`, `bash`, `zsh`, `fish`, `nu`, `cmd`, `powershell`, and `pwsh`. For
 example:
 
 ```sh
-FILE_BASH_SHELL=fish ./zig-out/bin/file_bash 'echo hello'
+FILE_BASH_SHELL=fish ./zig-out/bin/fb 'echo hello'
 ```
 
 An unset or empty value uses the platform default described above. An unknown
