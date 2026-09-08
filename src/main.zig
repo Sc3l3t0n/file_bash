@@ -3,6 +3,13 @@ const builtin = @import("builtin");
 const dir = @import("dir.zig");
 const shell = @import("shell.zig");
 const command = @import("command.zig");
+const instruction = @import("instruction.zig");
+
+const usage =
+    \\Usage: fb [run] '<command>'
+    \\       fb install|init|uninstall [agents|claude]
+    \\
+;
 
 const stdout_filename = "stdout";
 const stderr_filename = "stderr";
@@ -19,7 +26,7 @@ pub fn main(init: std.process.Init) void {
     const arena = init.arena.allocator();
 
     const code = dispatch(init.io, arena, init.minimal.args, init.environ_map, stdout, stderr) catch |err| {
-        stderr.print("file_bash: failed to run command and report its output: {s}\n", .{@errorName(err)}) catch {};
+        stderr.print("fb: command failed: {s}\n", .{@errorName(err)}) catch {};
         stderr.flush() catch {};
         std.process.exit(1);
     };
@@ -45,12 +52,30 @@ fn dispatch(
     stderr: *std.Io.Writer,
 ) !u8 {
     const parsed = command.parse((try process_args.toSlice(arena))[1..]) orelse {
-        try stderr.writeAll("Usage: fb [run] '<command>'\n");
+        try stderr.writeAll(usage);
         return 2;
     };
 
     return switch (parsed.command) {
         .run => run(io, arena, parsed.args, environ, stdout, stderr),
+        .install, .uninstall => blk: {
+            const target = instruction.Target.parse(parsed.args) orelse {
+                try stderr.writeAll(usage);
+                break :blk 2;
+            };
+
+            const result = try instruction.update(io, arena, environ, target, parsed.command == .install);
+            const message = switch (result) {
+                .added => "Added fb instructions to",
+                .updated => "Updated fb instructions in",
+                .removed => "Removed fb instructions from",
+                .unchanged => "No changes to fb instructions in",
+            };
+
+            try stdout.print("{s} {s}\n", .{ message, target.filename() });
+
+            break :blk 0;
+        },
     };
 }
 
@@ -63,7 +88,7 @@ fn run(
     stderr: *std.Io.Writer,
 ) !u8 {
     if (args.len == 0) {
-        try stderr.writeAll("Usage: fb [run] '<command>'\n");
+        try stderr.writeAll(usage);
         return 2;
     }
 
@@ -112,4 +137,5 @@ fn run(
 test {
     _ = dir;
     _ = shell;
+    _ = instruction;
 }

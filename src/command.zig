@@ -2,9 +2,14 @@ const std = @import("std");
 
 pub const Command = enum {
     run,
+    install,
+    uninstall,
 
     const names = std.StaticStringMap(Command).initComptime(.{
         .{ "run", .run },
+        .{ "install", .install },
+        .{ "init", .install },
+        .{ "uninstall", .uninstall },
     });
 };
 

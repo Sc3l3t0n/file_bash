@@ -8,7 +8,7 @@ zig build
 ./zig-out/bin/fb run 'echo hello'
 ```
 
-`run` is the default command and currently the only command. If the first
+`run` is the default command. If the first
 argument matches a command name, it selects that command; otherwise it is
 passed to `run`. An explicit `run` treats the next argument as shell source,
 even if it matches a command name.
@@ -40,3 +40,23 @@ or the system cleans its temporary directory.
 
 The runner returns the command's exit code (or 128 + signal, capped at 255, when
 terminated by a signal). Missing arguments return 2; runner errors return 1.
+
+Install minimal fb instructions globally (ensure `fb` is on `PATH`):
+
+```sh
+fb install          # ~/.agents/AGENTS.md (same as: fb install agents)
+fb install claude   # ~/.claude/CLAUDE.md
+fb uninstall        # remove the fb section from AGENTS.md
+fb uninstall claude # remove the fb section from CLAUDE.md
+```
+
+`init` is an alias for `install`, including `fb init claude`.
+
+Only global installation is supported. Home lookup uses `HOME` on Unix and
+`USERPROFILE` on Windows. Missing, empty, or relative home paths are errors.
+
+Install creates missing directories and files, and adds or updates a section
+between `<!-- fb:begin -->` and `<!-- fb:end -->`. Uninstall removes only that
+section, preserving surrounding content and leaving the file in place. Repeated
+installs/uninstalls are safe; malformed or duplicate markers produce an error
+without modifying the file.
