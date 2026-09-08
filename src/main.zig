@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const build_options = @import("build_options");
 const dir = @import("dir.zig");
 const shell = @import("shell.zig");
 const command = @import("command.zig");
@@ -8,6 +9,7 @@ const instruction = @import("instruction.zig");
 const usage =
     \\Usage: fb [run] '<command>'
     \\       fb install|init|uninstall [agents|claude]
+    \\       fb version
     \\
 ;
 
@@ -32,7 +34,7 @@ pub fn main(init: std.process.Init) void {
     };
 
     stdout.flush() catch |err| {
-        stderr.print("file_bash: failed to write command results to stdout: {s}\n", .{@errorName(err)}) catch {};
+        stderr.print("fb: failed to write command results to stdout: {s}\n", .{@errorName(err)}) catch {};
         stderr.flush() catch {};
         std.process.exit(1);
     };
@@ -57,6 +59,15 @@ fn dispatch(
     };
 
     return switch (parsed.command) {
+        .version => {
+            if (parsed.args.len > 0) {
+                try stderr.writeAll(usage);
+                return 2;
+            }
+
+            try stdout.print("{s}\n", .{build_options.version});
+            return 0;
+        },
         .run => run(io, arena, parsed.args, environ, stdout, stderr),
         .install, .uninstall => blk: {
             const target = instruction.Target.parse(parsed.args) orelse {
@@ -135,6 +146,7 @@ fn run(
 }
 
 test {
+    _ = command;
     _ = dir;
     _ = shell;
     _ = instruction;
