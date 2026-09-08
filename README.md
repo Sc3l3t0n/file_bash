@@ -7,11 +7,16 @@ zig build
 ./zig-out/bin/file_bash 'echo hello; echo error >&2; exit 7'
 ```
 
-The first argument is executed by `/bin/sh -c`. Quote the entire command;
+The first argument is executed by `/bin/sh -c` on Linux/macOS and
+`cmd.exe /d /s /c` on Windows. Quote the entire command;
 additional arguments are ignored. Standard input is inherited.
 
 The runner prints the exit code and absolute paths to separate `stdout` and
-`stderr` files in a unique `/tmp/file_bash-*` directory. Output goes directly to
+`stderr` files in a unique `file_bash-*` directory under the temporary directory.
+Linux/macOS use `TMPDIR`, falling back to `/tmp`. Windows checks `TMP`, then `TEMP`,
+and reports an error if neither is set. Empty values are skipped; relative
+paths are rejected, and the selected temporary directory must already exist.
+Output goes directly to
 the files while the command runs. Files remain after exit until you remove them
 or the system cleans its temporary directory.
 

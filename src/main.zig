@@ -1,4 +1,6 @@
 const std = @import("std");
+const builtin = @import("builtin");
+const dir = @import("dir.zig");
 
 const stdout_filename = "stdout";
 const stderr_filename = "stderr";
@@ -14,7 +16,7 @@ pub fn main(init: std.process.Init) void {
 
     const arena = init.arena.allocator();
 
-    const code = run(init.io, arena, init.minimal.args, stdout, stderr) catch |err| {
+    const code = run(init.io, arena, init.minimal.args, init.environ_map, stdout, stderr) catch |err| {
         stderr.print("file_bash: failed to run command and report its output: {s}\n", .{@errorName(err)}) catch {};
         stderr.flush() catch {};
         std.process.exit(1);
@@ -36,6 +38,7 @@ fn run(
     io: std.Io,
     arena: std.mem.Allocator,
     process_args: std.process.Args,
+    environ: *const std.process.Environ.Map,
     stdout: *std.Io.Writer,
     stderr: *std.Io.Writer,
 ) !u8 {
@@ -49,8 +52,11 @@ fn run(
     var random: [16]u8 = undefined;
     io.random(&random);
 
-    const directory = try std.fmt.allocPrint(arena, "/tmp/file_bash-{s}", .{std.fmt.bytesToHex(random, .lower)});
-    try std.Io.Dir.createDirAbsolute(io, directory, .fromMode(0o700));
+    const temp_path = try dir.tempPath(environ);
+    const name = "file_bash-" ++ std.fmt.bytesToHex(random, .lower);
+    const directory = try std.fs.path.join(arena, &.{ temp_path, name });
+    const permissions: std.Io.File.Permissions = if (builtin.os.tag == .windows) .default_dir else .fromMode(0o700);
+    try std.Io.Dir.createDirAbsolute(io, directory, permissions);
     var output_dir = try std.Io.Dir.openDirAbsolute(io, directory, .{});
     defer output_dir.close(io);
 
@@ -60,7 +66,10 @@ fn run(
     defer stderr_file.close(io);
 
     var child = try std.process.spawn(io, .{
-        .argv = &.{ "/bin/sh", "-c", args[1] },
+        .argv = if (builtin.os.tag == .windows)
+            &.{ "cmd.exe", "/d", "/s", "/c", args[1] }
+        else
+            &.{ "/bin/sh", "-c", args[1] },
         .stdout = .{ .file = stdout_file },
         .stderr = .{ .file = stderr_file },
     });
@@ -71,12 +80,18 @@ fn run(
         .unknown => 1,
     };
 
-    try stdout.print("exit code: {d}\nstdout: {s}/{s}\nstderr: {s}/{s}\n", .{
+    try stdout.print("exit code: {d}\nstdout: {s}{c}{s}\nstderr: {s}{c}{s}\n", .{
         code,
         directory,
+        std.fs.path.sep,
         stdout_filename,
         directory,
+        std.fs.path.sep,
         stderr_filename,
     });
     return code;
+}
+
+test {
+    _ = dir;
 }
