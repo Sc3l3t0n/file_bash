@@ -7,9 +7,21 @@ zig build
 ./zig-out/bin/file_bash 'echo hello; echo error >&2; exit 7'
 ```
 
-The first argument is executed by `/bin/sh -c` on Linux/macOS and
+The first argument is executed by `sh -c` on Linux/macOS and
 `cmd.exe /d /s /c` on Windows. Quote the entire command;
 additional arguments are ignored. Standard input is inherited.
+
+Set `FILE_BASH_SHELL` to select another command interpreter. Supported values
+are `sh`, `bash`, `zsh`, `fish`, `nu`, `cmd`, `powershell`, and `pwsh`. For
+example:
+
+```sh
+FILE_BASH_SHELL=fish ./zig-out/bin/file_bash 'echo hello'
+```
+
+An unset or empty value uses the platform default described above. An unknown
+value is an error. `cmd` and `powershell` are available only on Windows; `pwsh`
+is cross-platform. The selected shell must be available on `PATH`.
 
 The runner prints the exit code and absolute paths to separate `stdout` and
 `stderr` files in a unique `file_bash-*` directory under the temporary directory.

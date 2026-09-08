@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const dir = @import("dir.zig");
+const shell = @import("shell.zig");
 
 const stdout_filename = "stdout";
 const stderr_filename = "stderr";
@@ -65,11 +66,9 @@ fn run(
     const stderr_file = try output_dir.createFile(io, stderr_filename, .{ .exclusive = true });
     defer stderr_file.close(io);
 
+    const shell_argv = try shell.command(environ, args[1]);
     var child = try std.process.spawn(io, .{
-        .argv = if (builtin.os.tag == .windows)
-            &.{ "cmd.exe", "/d", "/s", "/c", args[1] }
-        else
-            &.{ "/bin/sh", "-c", args[1] },
+        .argv = shell_argv.slice(),
         .stdout = .{ .file = stdout_file },
         .stderr = .{ .file = stderr_file },
     });
@@ -94,4 +93,5 @@ fn run(
 
 test {
     _ = dir;
+    _ = shell;
 }
