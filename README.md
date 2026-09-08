@@ -5,9 +5,15 @@ Run a shell command and save its output to files:
 ```sh
 zig build
 ./zig-out/bin/fb 'echo hello; echo error >&2; exit 7'
+./zig-out/bin/fb run 'echo hello'
 ```
 
-The first argument is executed by `sh -c` on Linux/macOS and
+`run` is the default command and currently the only command. If the first
+argument matches a command name, it selects that command; otherwise it is
+passed to `run`. An explicit `run` treats the next argument as shell source,
+even if it matches a command name.
+
+The shell source is executed by `sh -c` on Linux/macOS and
 `cmd.exe /d /s /c` on Windows. Quote the entire command;
 additional arguments are ignored. Standard input is inherited.
 

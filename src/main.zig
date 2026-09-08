@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const dir = @import("dir.zig");
 const shell = @import("shell.zig");
+const command = @import("command.zig");
 
 const stdout_filename = "stdout";
 const stderr_filename = "stderr";
@@ -17,7 +18,7 @@ pub fn main(init: std.process.Init) void {
 
     const arena = init.arena.allocator();
 
-    const code = run(init.io, arena, init.minimal.args, init.environ_map, stdout, stderr) catch |err| {
+    const code = dispatch(init.io, arena, init.minimal.args, init.environ_map, stdout, stderr) catch |err| {
         stderr.print("file_bash: failed to run command and report its output: {s}\n", .{@errorName(err)}) catch {};
         stderr.flush() catch {};
         std.process.exit(1);
@@ -35,7 +36,7 @@ pub fn main(init: std.process.Init) void {
     std.process.exit(code);
 }
 
-fn run(
+fn dispatch(
     io: std.Io,
     arena: std.mem.Allocator,
     process_args: std.process.Args,
@@ -43,9 +44,26 @@ fn run(
     stdout: *std.Io.Writer,
     stderr: *std.Io.Writer,
 ) !u8 {
-    const args = try process_args.toSlice(arena);
-    if (args.len < 2) {
-        try stderr.writeAll("Usage: fb '<command>'\n");
+    const parsed = command.parse((try process_args.toSlice(arena))[1..]) orelse {
+        try stderr.writeAll("Usage: fb [run] '<command>'\n");
+        return 2;
+    };
+
+    return switch (parsed.command) {
+        .run => run(io, arena, parsed.args, environ, stdout, stderr),
+    };
+}
+
+fn run(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    args: []const [:0]const u8,
+    environ: *const std.process.Environ.Map,
+    stdout: *std.Io.Writer,
+    stderr: *std.Io.Writer,
+) !u8 {
+    if (args.len == 0) {
+        try stderr.writeAll("Usage: fb [run] '<command>'\n");
         return 2;
     }
 
@@ -66,7 +84,7 @@ fn run(
     const stderr_file = try output_dir.createFile(io, stderr_filename, .{ .exclusive = true });
     defer stderr_file.close(io);
 
-    const shell_argv = try shell.command(environ, args[1]);
+    const shell_argv = try shell.command(environ, args[0]);
     var child = try std.process.spawn(io, .{
         .argv = shell_argv.slice(),
         .stdout = .{ .file = stdout_file },
