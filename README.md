@@ -60,3 +60,7 @@ between `<!-- fb:begin -->` and `<!-- fb:end -->`. Uninstall removes only that
 section, preserving surrounding content and leaving the file in place. Repeated
 installs/uninstalls are safe; malformed or duplicate markers produce an error
 without modifying the file.
+
+## AI disclosure
+
+AI/LLMs assisted with development. I reviewed all code and remain responsible for all of it.
