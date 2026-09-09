@@ -27,6 +27,7 @@ pub fn spawn(io: std.Io, arena: std.mem.Allocator, options: Options) !Child {
             .environ_map = &environ,
             .stdout = .{ .file = options.stdout },
             .stderr = .{ .file = options.stderr },
+            .stdin = .close,
             // A timed run leads its own process group so a timeout can kill
             // the whole command tree; without one, signals keep reaching the
             // child.
