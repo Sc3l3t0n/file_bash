@@ -8,7 +8,7 @@ const instruction = @import("instruction.zig");
 const Child = @import("Child.zig");
 
 const usage =
-    \\Usage: fb [run] [-t|--timeout <duration>] '<command>'
+    \\Usage: fb [run] [-a|--async] [-t|--timeout <duration>] '<command>'
     \\       fb install|init|uninstall [agents|claude]
     \\       fb version
     \\
@@ -131,14 +131,18 @@ fn run(
     const stderr_file = try output_dir.createFile(io, stderr_filename, .{ .exclusive = true });
     defer stderr_file.close(io);
 
-    // Report the paths before spawning so a caller can follow the output while
-    // the command is still running.
+    // With --async the paths are reported before spawning so a caller can follow
+    // the output while the command is still running.
     const sep = std.fs.path.sep;
-    try stdout.print("stdout: {s}{c}{s}{c}{s}{c}{s}\nstderr: {s}{c}{s}{c}{s}{c}{s}\n", .{
+    const paths_format = "stdout: {s}{c}{s}{c}{s}{c}{s}\nstderr: {s}{c}{s}{c}{s}{c}{s}\n";
+    const paths_args = .{
         temp_path, sep, parent_dirname, sep, name, sep, stdout_filename,
         temp_path, sep, parent_dirname, sep, name, sep, stderr_filename,
-    });
-    try stdout.flush();
+    };
+    if (parsed.async) {
+        try stdout.print(paths_format, paths_args);
+        try stdout.flush();
+    }
 
     const shell_argv = try shell.command(environ, parsed.source);
     var child = try Child.spawn(io, arena, .{
@@ -154,6 +158,7 @@ fn run(
         try stderr.print("fb: command timed out after {f} and was killed\n", .{parsed.timeout.?});
     }
 
+    if (!parsed.async) try stdout.print(paths_format, paths_args);
     try stdout.print("exit code: {d}\n", .{status.code});
     return status.code;
 }

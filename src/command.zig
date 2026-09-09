@@ -33,21 +33,27 @@ pub fn parse(args: []const [:0]const u8) ?Parsed {
 pub const Run = struct {
     source: []const u8,
     timeout: ?std.Io.Duration,
+    /// Print the output paths before the command starts instead of after it exits.
+    async: bool,
 
     pub const Error = error{
         MissingCommand,
         MissingTimeoutValue,
         InvalidTimeout,
         UnknownFlag,
+        UnexpectedValue,
         UnexpectedArgument,
     };
 
     const Option = enum {
         timeout,
+        async,
 
         const names = std.StaticStringMap(Option).initComptime(.{
             .{ "-t", .timeout },
             .{ "--timeout", .timeout },
+            .{ "-a", .async },
+            .{ "--async", .async },
         });
     };
 
@@ -55,6 +61,7 @@ pub const Run = struct {
     /// command source, borrowing the argument slices.
     pub fn parse(args: []const [:0]const u8) Error!Run {
         var timeout: ?std.Io.Duration = null;
+        var async = false;
         var rest = args;
 
         while (rest.len > 0 and std.mem.startsWith(u8, rest[0], "-")) {
@@ -71,13 +78,18 @@ pub const Run = struct {
                     timeout = try parseTimeout(rest[1]);
                     rest = rest[2..];
                 },
+                .async => {
+                    if (separator != null) return error.UnexpectedValue;
+                    async = true;
+                    rest = rest[1..];
+                },
             }
         }
 
         if (rest.len == 0) return error.MissingCommand;
         if (rest.len > 1) return error.UnexpectedArgument;
 
-        return .{ .source = rest[0], .timeout = timeout };
+        return .{ .source = rest[0], .timeout = timeout, .async = async };
     }
 };
 
@@ -132,6 +144,15 @@ test "run argument parsing" {
     const bare = try Run.parse(&.{"echo hello"});
     try t.expectEqualStrings("echo hello", bare.source);
     try t.expectEqual(null, bare.timeout);
+    try t.expectEqual(false, bare.async);
+
+    inline for (.{ "-a", "--async" }) |flag| {
+        const run = try Run.parse(&.{ flag, "-t", "5", "echo hello" });
+        try t.expectEqual(true, run.async);
+        try t.expectEqual(std.Io.Duration.fromNanoseconds(std.time.ns_per_s * 5), run.timeout.?);
+        try t.expectEqualStrings("echo hello", run.source);
+    }
+    try t.expectError(error.UnexpectedValue, Run.parse(&.{ "--async=1", "echo hello" }));
 
     const cases = .{
         .{ "30", std.time.ns_per_s * 30 },
