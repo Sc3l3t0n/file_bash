@@ -6,11 +6,22 @@ const shell = @import("shell.zig");
 const command = @import("command.zig");
 const instruction = @import("instruction.zig");
 const Child = @import("Child.zig");
+const excerpt = @import("excerpt.zig");
 
 const usage =
-    \\Usage: fb [run] [-a|--async] [-t|--timeout <duration>] '<command>'
+    \\Usage: fb [run] [options] '<command>'
     \\       fb install|init|uninstall [agents|claude]
     \\       fb version
+    \\
+    \\Options:
+    \\  -a, --async               print the output paths before the command starts
+    \\  -t, --timeout <duration>  kill the command after the duration (30s, 5m, 2h)
+    \\  -h, --head <n>            print the first n lines of stdout and stderr afterwards
+    \\  -l, --tail <n>            print the last n lines of stdout and stderr afterwards
+    \\  -o:h, --out:head <n>      first n lines of stdout only
+    \\  -o:l, --out:tail <n>      last n lines of stdout only
+    \\  -e:h, --err:head <n>      first n lines of stderr only
+    \\  -e:l, --err:tail <n>      last n lines of stderr only
     \\
 ;
 
@@ -159,12 +170,24 @@ fn run(
     }
 
     if (!parsed.async) try stdout.print(paths_format, paths_args);
+    try writeExcerpt(io, output_dir, stdout_filename, parsed.stdout, stdout);
+    try writeExcerpt(io, output_dir, stderr_filename, parsed.stderr, stdout);
+    if (!parsed.stdout.isEmpty() or !parsed.stderr.isEmpty()) try stdout.writeAll("--- end ---\n");
     try stdout.print("exit code: {d}\n", .{status.code});
     return status.code;
 }
 
+fn writeExcerpt(io: std.Io, output_dir: std.Io.Dir, filename: []const u8, lines: excerpt.Excerpt, out: *std.Io.Writer) !void {
+    if (lines.isEmpty()) return;
+
+    const file = try output_dir.openFile(io, filename, .{});
+    defer file.close(io);
+    try excerpt.write(io, file, lines, filename, out);
+}
+
 test {
     _ = command;
+    _ = excerpt;
     _ = Child;
     _ = dir;
     _ = shell;

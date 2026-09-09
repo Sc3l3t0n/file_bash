@@ -47,6 +47,16 @@ environment and then overrides `NO_COLOR=1`, `CLICOLOR=0`, and
 These overrides win over inherited values, so commands do not wait for a prompt
 or write escape sequences into the output files.
 
+`--head <n>` and `--tail <n>` (short `-h`, `-l`) print the first or last `n`
+lines of both output files after the command exits, each under a marker line.
+`--out:head`, `--out:tail`, `--err:head` and `--err:tail` (short `-o:h`, `-o:l`,
+`-e:h`, `-e:l`) restrict this to one file, and override the general flag for it:
+
+```sh
+fb run --tail 20 'zig build test'
+fb run -o:l 5 -e:l=50 'make'
+```
+
 `--timeout <duration>` kills the command when it runs too long. `-t` is the
 short form, and both accept the value as a separate argument or after `=`:
 

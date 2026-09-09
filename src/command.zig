@@ -1,4 +1,5 @@
 const std = @import("std");
+const Excerpt = @import("excerpt.zig").Excerpt;
 
 pub const Command = enum {
     run,
@@ -35,11 +36,16 @@ pub const Run = struct {
     timeout: ?std.Io.Duration,
     /// Print the output paths before the command starts instead of after it exits.
     async: bool,
+    /// Lines of the stdout file to print after the command exits.
+    stdout: Excerpt,
+    /// Lines of the stderr file to print after the command exits.
+    stderr: Excerpt,
 
     pub const Error = error{
         MissingCommand,
-        MissingTimeoutValue,
+        MissingValue,
         InvalidTimeout,
+        InvalidLineCount,
         UnknownFlag,
         UnexpectedValue,
         UnexpectedArgument,
@@ -48,48 +54,88 @@ pub const Run = struct {
     const Option = enum {
         timeout,
         async,
+        head,
+        tail,
+        out_head,
+        out_tail,
+        err_head,
+        err_tail,
 
         const names = std.StaticStringMap(Option).initComptime(.{
             .{ "-t", .timeout },
             .{ "--timeout", .timeout },
             .{ "-a", .async },
             .{ "--async", .async },
+            .{ "-h", .head },
+            .{ "--head", .head },
+            .{ "-l", .tail },
+            .{ "--tail", .tail },
+            .{ "-o:h", .out_head },
+            .{ "--out:head", .out_head },
+            .{ "-o:l", .out_tail },
+            .{ "--out:tail", .out_tail },
+            .{ "-e:h", .err_head },
+            .{ "--err:head", .err_head },
+            .{ "-e:l", .err_tail },
+            .{ "--err:tail", .err_tail },
         });
+
+        fn takesValue(option: Option) bool {
+            return option != .async;
+        }
     };
 
     /// Parses `run` arguments: optional options followed by exactly one
     /// command source, borrowing the argument slices.
     pub fn parse(args: []const [:0]const u8) Error!Run {
-        var timeout: ?std.Io.Duration = null;
-        var async = false;
+        var run: Run = .{ .source = "", .timeout = null, .async = false, .stdout = .{}, .stderr = .{} };
         var rest = args;
 
         while (rest.len > 0 and std.mem.startsWith(u8, rest[0], "-")) {
             const flag = rest[0];
             const separator = std.mem.indexOfScalar(u8, flag, '=');
             const name = flag[0 .. separator orelse flag.len];
+            const option = Option.names.get(name) orelse return error.UnknownFlag;
 
-            switch (Option.names.get(name) orelse return error.UnknownFlag) {
-                .timeout => if (separator) |index| {
-                    timeout = try parseTimeout(flag[index + 1 ..]);
+            // The value follows `=` or is the next argument.
+            var value: []const u8 = "";
+            if (option.takesValue()) {
+                if (separator) |index| {
+                    value = flag[index + 1 ..];
                     rest = rest[1..];
                 } else {
-                    if (rest.len < 2) return error.MissingTimeoutValue;
-                    timeout = try parseTimeout(rest[1]);
+                    if (rest.len < 2) return error.MissingValue;
+                    value = rest[1];
                     rest = rest[2..];
+                }
+            } else {
+                if (separator != null) return error.UnexpectedValue;
+                rest = rest[1..];
+            }
+
+            switch (option) {
+                .timeout => run.timeout = try parseTimeout(value),
+                .async => run.async = true,
+                .head => {
+                    run.stdout.head = try parseLineCount(value);
+                    run.stderr.head = run.stdout.head;
                 },
-                .async => {
-                    if (separator != null) return error.UnexpectedValue;
-                    async = true;
-                    rest = rest[1..];
+                .tail => {
+                    run.stdout.tail = try parseLineCount(value);
+                    run.stderr.tail = run.stdout.tail;
                 },
+                .out_head => run.stdout.head = try parseLineCount(value),
+                .out_tail => run.stdout.tail = try parseLineCount(value),
+                .err_head => run.stderr.head = try parseLineCount(value),
+                .err_tail => run.stderr.tail = try parseLineCount(value),
             }
         }
 
         if (rest.len == 0) return error.MissingCommand;
         if (rest.len > 1) return error.UnexpectedArgument;
 
-        return .{ .source = rest[0], .timeout = timeout, .async = async };
+        run.source = rest[0];
+        return run;
     }
 };
 
@@ -131,6 +177,13 @@ fn parseTimeout(text: []const u8) Run.Error!std.Io.Duration {
     return .fromNanoseconds(try amount(digits) * unit.nanoseconds());
 }
 
+fn parseLineCount(text: []const u8) Run.Error!u32 {
+    const value = std.fmt.parseUnsigned(u32, text, 10) catch return error.InvalidLineCount;
+    if (value == 0) return error.InvalidLineCount;
+
+    return value;
+}
+
 fn amount(text: []const u8) Run.Error!i96 {
     const value = std.fmt.parseUnsigned(u32, text, 10) catch return error.InvalidTimeout;
     if (value == 0) return error.InvalidTimeout;
@@ -153,6 +206,23 @@ test "run argument parsing" {
         try t.expectEqualStrings("echo hello", run.source);
     }
     try t.expectError(error.UnexpectedValue, Run.parse(&.{ "--async=1", "echo hello" }));
+
+    const both = try Run.parse(&.{ "-h", "3", "--tail=7", "echo hello" });
+    try t.expectEqual(Excerpt{ .head = 3, .tail = 7 }, both.stdout);
+    try t.expectEqual(Excerpt{ .head = 3, .tail = 7 }, both.stderr);
+
+    const single = try Run.parse(&.{ "-o:h", "1", "--err:tail", "2", "-e:h=4", "--out:tail=8", "echo hello" });
+    try t.expectEqual(Excerpt{ .head = 1, .tail = 8 }, single.stdout);
+    try t.expectEqual(Excerpt{ .head = 4, .tail = 2 }, single.stderr);
+
+    const override = try Run.parse(&.{ "--head", "3", "-e:h", "9", "echo hello" });
+    try t.expectEqual(Excerpt{ .head = 3 }, override.stdout);
+    try t.expectEqual(Excerpt{ .head = 9 }, override.stderr);
+
+    try t.expectError(error.MissingValue, Run.parse(&.{"-h"}));
+    inline for (.{ "0", "", "-1", "x", "1s" }) |invalid| {
+        try t.expectError(error.InvalidLineCount, Run.parse(&.{ "--tail", invalid, "echo hello" }));
+    }
 
     const cases = .{
         .{ "30", std.time.ns_per_s * 30 },
@@ -177,8 +247,8 @@ test "run argument parsing" {
 
     try t.expectError(error.MissingCommand, Run.parse(&.{}));
     try t.expectError(error.MissingCommand, Run.parse(&.{ "--timeout", "5" }));
-    try t.expectError(error.MissingTimeoutValue, Run.parse(&.{"--timeout"}));
-    try t.expectError(error.MissingTimeoutValue, Run.parse(&.{"-t"}));
+    try t.expectError(error.MissingValue, Run.parse(&.{"--timeout"}));
+    try t.expectError(error.MissingValue, Run.parse(&.{"-t"}));
     try t.expectError(error.UnknownFlag, Run.parse(&.{ "-x", "echo hello" }));
     try t.expectError(error.UnknownFlag, Run.parse(&.{ "--quiet", "echo hello" }));
     try t.expectError(error.UnknownFlag, Run.parse(&.{ "--timeoutish=5", "echo hello" }));
