@@ -40,12 +40,13 @@ Output goes directly to
 the files while the command runs. Files remain after exit until you remove them
 or the system cleans its temporary directory.
 
-`--timeout <duration>` (or `--timeout=<duration>`) kills the command when it
-runs too long:
+`--timeout <duration>` kills the command when it runs too long. `-t` is the
+short form, and both accept the value as a separate argument or after `=`:
 
 ```sh
 fb run --timeout 30s 'zig build'
-fb run --timeout 500ms 'sleep 5'
+fb run -t 500ms 'sleep 5'
+fb run -t=2m 'zig build test'
 ```
 
 The duration is a positive count with a `ms`, `s`, `m`, or `h` suffix; a bare

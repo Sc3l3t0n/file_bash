@@ -30,7 +30,7 @@ const content =
     \\starts and the exit code when it finishes; inspect those files with targeted
     \\searches or bounded reads, even while the command is still running.
     \\The files remain available after the command exits.
-    \\Add `--timeout <duration>` (such as `30s` or `5m`) to kill a command that may hang;
+    \\Add `-t <duration>` (such as `30s` or `5m`) to kill a command that may hang;
     \\a timed-out run exits with code 124.
 ;
 

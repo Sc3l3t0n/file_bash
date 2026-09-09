@@ -8,7 +8,7 @@ const instruction = @import("instruction.zig");
 const Child = @import("Child.zig");
 
 const usage =
-    \\Usage: fb [run] [--timeout <duration>] '<command>'
+    \\Usage: fb [run] [-t|--timeout <duration>] '<command>'
     \\       fb install|init|uninstall [agents|claude]
     \\       fb version
     \\

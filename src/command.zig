@@ -42,26 +42,36 @@ pub const Run = struct {
         UnexpectedArgument,
     };
 
-    const timeout_flag = "--timeout";
+    const Option = enum {
+        timeout,
 
-    /// Parses `run` arguments: optional flags followed by exactly one command
-    /// source, borrowing the argument slices.
+        const names = std.StaticStringMap(Option).initComptime(.{
+            .{ "-t", .timeout },
+            .{ "--timeout", .timeout },
+        });
+    };
+
+    /// Parses `run` arguments: optional options followed by exactly one
+    /// command source, borrowing the argument slices.
     pub fn parse(args: []const [:0]const u8) Error!Run {
         var timeout: ?std.Io.Duration = null;
         var rest = args;
 
         while (rest.len > 0 and std.mem.startsWith(u8, rest[0], "-")) {
             const flag = rest[0];
-            if (!std.mem.startsWith(u8, flag, timeout_flag)) return error.UnknownFlag;
+            const separator = std.mem.indexOfScalar(u8, flag, '=');
+            const name = flag[0 .. separator orelse flag.len];
 
-            if (flag.len == timeout_flag.len) {
-                if (rest.len < 2) return error.MissingTimeoutValue;
-                timeout = try parseTimeout(rest[1]);
-                rest = rest[2..];
-            } else if (flag[timeout_flag.len] == '=') {
-                timeout = try parseTimeout(flag[timeout_flag.len + 1 ..]);
-                rest = rest[1..];
-            } else return error.UnknownFlag;
+            switch (Option.names.get(name) orelse return error.UnknownFlag) {
+                .timeout => if (separator) |index| {
+                    timeout = try parseTimeout(flag[index + 1 ..]);
+                    rest = rest[1..];
+                } else {
+                    if (rest.len < 2) return error.MissingTimeoutValue;
+                    timeout = try parseTimeout(rest[1]);
+                    rest = rest[2..];
+                },
+            }
         }
 
         if (rest.len == 0) return error.MissingCommand;
@@ -131,19 +141,24 @@ test "run argument parsing" {
         .{ "2h", std.time.ns_per_hour * 2 },
     };
     inline for (cases) |case| {
-        const separate = try Run.parse(&.{ "--timeout", case[0], "echo hello" });
-        const joined = try Run.parse(&.{ "--timeout=" ++ case[0], "echo hello" });
         const expected: std.Io.Duration = .fromNanoseconds(case[1]);
 
-        try t.expectEqual(expected, separate.timeout.?);
-        try t.expectEqual(expected, joined.timeout.?);
-        try t.expectEqualStrings("echo hello", separate.source);
-        try t.expectEqualStrings("echo hello", joined.source);
+        inline for (.{ "-t", "--timeout" }) |flag| {
+            const separate = try Run.parse(&.{ flag, case[0], "echo hello" });
+            const joined = try Run.parse(&.{ flag ++ "=" ++ case[0], "echo hello" });
+
+            try t.expectEqual(expected, separate.timeout.?);
+            try t.expectEqual(expected, joined.timeout.?);
+            try t.expectEqualStrings("echo hello", separate.source);
+            try t.expectEqualStrings("echo hello", joined.source);
+        }
     }
 
     try t.expectError(error.MissingCommand, Run.parse(&.{}));
     try t.expectError(error.MissingCommand, Run.parse(&.{ "--timeout", "5" }));
     try t.expectError(error.MissingTimeoutValue, Run.parse(&.{"--timeout"}));
+    try t.expectError(error.MissingTimeoutValue, Run.parse(&.{"-t"}));
+    try t.expectError(error.UnknownFlag, Run.parse(&.{ "-x", "echo hello" }));
     try t.expectError(error.UnknownFlag, Run.parse(&.{ "--quiet", "echo hello" }));
     try t.expectError(error.UnknownFlag, Run.parse(&.{ "--timeoutish=5", "echo hello" }));
     try t.expectError(error.UnexpectedArgument, Run.parse(&.{ "echo hello", "extra" }));
