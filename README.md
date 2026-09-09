@@ -113,7 +113,7 @@ without modifying the file.
 Print the program version:
 
 ```sh
-fb version
+fb --version # or fb -v
 ```
 
 ## AI disclosure

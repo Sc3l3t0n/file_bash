@@ -5,23 +5,24 @@ pub const Command = enum {
     run,
     install,
     uninstall,
-    version,
 
     const names = std.StaticStringMap(Command).initComptime(.{
         .{ "run", .run },
         .{ "install", .install },
         .{ "init", .install },
         .{ "uninstall", .uninstall },
-        .{ "version", .version },
     });
 };
 
 pub const BaseOption = enum {
     help,
+    version,
 
     const names = std.StaticStringMap(BaseOption).initComptime(.{
         .{ "--help", .help },
         .{ "-h", .help },
+        .{ "--version", .version },
+        .{ "-v", .version },
     });
 };
 
@@ -486,9 +487,15 @@ test "command parsing" {
     try t.expectEqual(Command.run, run_explicit.command);
     try t.expectEqualStrings("echo hello", run_explicit.args[0]);
 
-    const v = parse(&.{"version"}).?;
-    try t.expectEqual(Command.version, v.command);
-    try t.expectEqual(@as(usize, 0), v.args.len);
+    inline for (.{ "--version", "-v" }) |name| {
+        const v = parse(&.{name}).?;
+        try t.expectEqual(BaseOption.version, v.option.?);
+        try t.expectEqual(@as(usize, 0), v.args.len);
+
+        const run_version = parse(&.{ "run", name }).?;
+        try t.expectEqual(null, run_version.option);
+        try t.expectError(error.UnknownFlag, Run.parse(run_version.args, .{}));
+    }
 
     inline for (&.{ "install", "init" }) |name| {
         const inst = parse(&.{ name, "claude" }).?;

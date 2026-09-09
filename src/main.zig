@@ -11,16 +11,15 @@ const excerpt = @import("excerpt.zig");
 const usage =
     \\Usage: fb [run] [options] '<command>'
     \\       fb install|init|uninstall [agents|claude]
-    \\       fb version
     \\
     \\Commands:
     \\  run        run a shell command and save stdout and stderr to files (default)
     \\  install    install global fb instructions (alias: init)
     \\  uninstall  remove global fb instructions
-    \\  version    print the version
     \\
     \\Options:
-    \\  -h, --help  show this help
+    \\  -h, --help     show this help
+    \\  -v, --version  print the version
     \\
     \\Use 'fb run --help' for run options and examples.
     \\
@@ -104,9 +103,6 @@ fn dispatch(
             try stdout.writeAll(usage);
             return 0;
         },
-    };
-
-    return switch (parsed.command) {
         .version => {
             if (parsed.args.len > 0) {
                 try stderr.writeAll(usage);
@@ -116,6 +112,9 @@ fn dispatch(
             try stdout.print("{s}\n", .{build_options.version});
             return 0;
         },
+    };
+
+    return switch (parsed.command) {
         .run => run(io, arena, parsed.args, environ, stdout, stderr),
         .install, .uninstall => blk: {
             const target = instruction.Target.parse(parsed.args) orelse {
