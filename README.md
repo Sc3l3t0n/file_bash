@@ -8,6 +8,11 @@ zig build
 ./zig-out/bin/fb run 'echo hello'
 ```
 
+Run `fb`, `fb -h`, or `fb --help` for general help. Run `fb run --help`
+(also `fb run` or `fb run -h`) for run options and examples. General help
+lists commands without listing run options. Help exits successfully without
+running a shell command or creating output files.
+
 `run` is the default command. If the first
 argument matches a command name, it selects that command; otherwise it is
 passed to `run`. An explicit `run` treats the next argument as shell source,
@@ -48,7 +53,7 @@ environment and then overrides `NO_COLOR=1`, `CLICOLOR=0`, and
 These overrides win over inherited values, so commands do not wait for a prompt
 or write escape sequences into the output files.
 
-`--head <n>` and `--tail <n>` (short `-h`, `-l`) print the first or last `n`
+`--head <n>` and `--tail <n>` (short `-d`, `-l`) print the first or last `n`
 lines of both output files after the command exits, each under a marker line.
 `--out:head`, `--out:tail`, `--err:head` and `--err:tail` (short `-o:h`, `-o:l`,
 `-e:h`, `-e:l`) restrict this to one file. For each of head and tail, use either

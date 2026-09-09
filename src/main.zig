@@ -13,15 +13,39 @@ const usage =
     \\       fb install|init|uninstall [agents|claude]
     \\       fb version
     \\
+    \\Commands:
+    \\  run        run a shell command and save stdout and stderr to files (default)
+    \\  install    install global fb instructions (alias: init)
+    \\  uninstall  remove global fb instructions
+    \\  version    print the version
+    \\
+    \\Options:
+    \\  -h, --help  show this help
+    \\
+    \\Use 'fb run --help' for run options and examples.
+    \\
+;
+
+const run_usage =
+    \\Usage: fb [run] [options] '<command>'
+    \\
+    \\Save stdout and stderr to files; report paths, sizes, and exit code on completion.
+    \\
     \\Options:
     \\  -a, --async               print the output paths before the command starts
     \\  -t, --timeout <duration>  kill the command after the duration (30s, 5m, 2h)
-    \\  -h, --head <n>            print the first n lines of stdout and stderr afterwards
+    \\  -d, --head <n>            print the first n lines of stdout and stderr afterwards
     \\  -l, --tail <n>            print the last n lines of stdout and stderr afterwards
     \\  -o:h, --out:head <n>      first n lines of stdout only
     \\  -o:l, --out:tail <n>      last n lines of stdout only
     \\  -e:h, --err:head <n>      first n lines of stderr only
     \\  -e:l, --err:tail <n>      last n lines of stderr only
+    \\  -h, --help                show this help
+    \\
+    \\Examples:
+    \\  fb 'echo hello'
+    \\  fb run --tail 20 'zig build test'
+    \\  fb run --timeout 30s 'zig build'
     \\
 ;
 
@@ -67,8 +91,19 @@ fn dispatch(
     stderr: *std.Io.Writer,
 ) !u8 {
     const parsed = command.parse((try process_args.toSlice(arena))[1..]) orelse {
-        try stderr.writeAll(usage);
-        return 2;
+        try stdout.writeAll(usage);
+        return 0;
+    };
+
+    if (parsed.option) |option| switch (option) {
+        .help => {
+            if (parsed.args.len > 0) {
+                try stderr.writeAll(usage);
+                return 2;
+            }
+            try stdout.writeAll(usage);
+            return 0;
+        },
     };
 
     return switch (parsed.command) {
@@ -111,15 +146,25 @@ fn run(
     stdout: *std.Io.Writer,
     stderr: *std.Io.Writer,
 ) !u8 {
+    if (args.len == 0) {
+        try stdout.writeAll(run_usage);
+        return 0;
+    }
+
     var diagnostic: command.Run.Diagnostic = .{};
     const parsed = command.Run.parse(args, .{ .diagnostic = &diagnostic }) catch |err| {
         try diagnostic.write(err, stderr);
         switch (err) {
-            error.MissingCommand, error.UnknownFlag => try stderr.writeAll(usage),
+            error.MissingCommand, error.UnknownFlag => try stderr.writeAll(run_usage),
             else => {},
         }
         return 2;
     };
+
+    if (parsed.help) {
+        try stdout.writeAll(run_usage);
+        return 0;
+    }
 
     // Keep each run's files together and leave them available after exit.
     var random: [16]u8 = undefined;

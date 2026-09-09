@@ -16,7 +16,17 @@ pub const Command = enum {
     });
 };
 
+pub const BaseOption = enum {
+    help,
+
+    const names = std.StaticStringMap(BaseOption).initComptime(.{
+        .{ "--help", .help },
+        .{ "-h", .help },
+    });
+};
+
 pub const Parsed = struct {
+    option: ?BaseOption = null,
     command: Command,
     args: []const [:0]const u8,
 };
@@ -25,6 +35,10 @@ pub const Parsed = struct {
 pub fn parse(args: []const [:0]const u8) ?Parsed {
     if (args.len == 0) return null;
 
+    if (BaseOption.names.get(args[0])) |option| {
+        return .{ .command = .run, .option = option, .args = args[1..] };
+    }
+
     if (Command.names.get(args[0])) |selected| {
         return .{ .command = selected, .args = args[1..] };
     }
@@ -32,6 +46,7 @@ pub fn parse(args: []const [:0]const u8) ?Parsed {
 }
 
 pub const Run = struct {
+    help: bool = false,
     source: []const u8,
     timeout: ?std.Io.Duration,
     /// Print the output paths before the command starts instead of after it exits.
@@ -78,6 +93,7 @@ pub const Run = struct {
     };
 
     const Option = enum {
+        help,
         timeout,
         async,
         head,
@@ -92,7 +108,9 @@ pub const Run = struct {
             .{ "--timeout", .timeout },
             .{ "-a", .async },
             .{ "--async", .async },
-            .{ "-h", .head },
+            .{ "-h", .help },
+            .{ "--help", .help },
+            .{ "-d", .head },
             .{ "--head", .head },
             .{ "-l", .tail },
             .{ "--tail", .tail },
@@ -107,7 +125,7 @@ pub const Run = struct {
         });
 
         fn takesValue(option: Option) bool {
-            return option != .async;
+            return option != .async and option != .help;
         }
     };
 
@@ -152,6 +170,10 @@ pub const Run = struct {
             if (opts.diagnostic) |diagnostic| diagnostic.value = value;
 
             switch (option) {
+                .help => {
+                    run.help = true;
+                    return run;
+                },
                 .timeout => run.timeout = try parseTimeout(value),
                 .async => run.async = true,
                 .head => {
@@ -276,7 +298,7 @@ test "run argument parsing" {
     }
     try t.expectError(error.UnexpectedValue, Run.parse(&.{ "--async=1", "echo hello" }, .{}));
 
-    const both = try Run.parse(&.{ "-h", "3", "--tail=7", "echo hello" }, .{});
+    const both = try Run.parse(&.{ "--head", "3", "--tail=7", "echo hello" }, .{});
     try t.expectEqual(Excerpt{ .head = 3, .tail = 7 }, both.stdout);
     try t.expectEqual(Excerpt{ .head = 3, .tail = 7 }, both.stderr);
 
@@ -284,7 +306,7 @@ test "run argument parsing" {
     try t.expectEqual(Excerpt{ .head = 1, .tail = 8 }, single.stdout);
     try t.expectEqual(Excerpt{ .head = 4, .tail = 2 }, single.stderr);
 
-    try t.expectError(error.MissingValue, Run.parse(&.{"-h"}, .{}));
+    try t.expectError(error.MissingValue, Run.parse(&.{"-d"}, .{}));
     inline for (.{ "0", "", "-1", "x", "1s" }) |invalid| {
         try t.expectError(error.InvalidLineCount, Run.parse(&.{ "--tail", invalid, "echo hello" }, .{}));
     }
@@ -327,7 +349,7 @@ test "run argument parsing" {
 test "head flag scopes are mutually exclusive" {
     const t = std.testing;
 
-    inline for (.{ "--head", "-h" }) |general| {
+    inline for (.{ "--head", "-d" }) |general| {
         const both = try Run.parse(&.{ general, "3", "echo hello" }, .{});
         try t.expectEqual(Excerpt{ .head = 3 }, both.stdout);
         try t.expectEqual(Excerpt{ .head = 3 }, both.stderr);
@@ -399,7 +421,7 @@ test "tail flag scopes are mutually exclusive" {
 test "repeated flags within a scope use the last count" {
     const t = std.testing;
 
-    const both = try Run.parse(&.{ "--head=1", "-h=2", "--tail=3", "-l=4", "echo hello" }, .{});
+    const both = try Run.parse(&.{ "--head=1", "-d=2", "--tail=3", "-l=4", "echo hello" }, .{});
     try t.expectEqual(Excerpt{ .head = 2, .tail = 4 }, both.stdout);
     try t.expectEqual(both.stdout, both.stderr);
 
@@ -422,7 +444,7 @@ test "head and tail scopes are independent" {
 
 test "run diagnostics identify the offending arguments" {
     const cases = .{
-        .{ &.{ "-h=1", "--out:head=2", "echo hello" }, error.ConflictingHeadFlags, "option '--out:head' conflicts with '-h'" },
+        .{ &.{ "--head=1", "--out:head=2", "echo hello" }, error.ConflictingHeadFlags, "option '--out:head' conflicts with '--head'" },
         .{ &.{ "-e:l=2", "--tail", "1", "echo hello" }, error.ConflictingTailFlags, "option '--tail' conflicts with '-e:l'" },
         .{ &.{ "--head", "0", "echo hello" }, error.InvalidLineCount, "invalid line count '0' for '--head'" },
         .{ &.{ "-t=bad", "echo hello" }, error.InvalidTimeout, "invalid timeout 'bad' for '-t'" },
@@ -443,6 +465,18 @@ test "command parsing" {
     const t = std.testing;
 
     try t.expectEqual(null, parse(&.{}));
+
+    inline for (.{ "-h", "--help" }) |name| {
+        const help = parse(&.{name}).?;
+        try t.expectEqual(BaseOption.help, help.option.?);
+        try t.expectEqual(@as(usize, 0), help.args.len);
+
+        const run_help = parse(&.{ "run", name }).?;
+        try t.expectEqual(Command.run, run_help.command);
+        try t.expectEqual(null, run_help.option);
+        try t.expect((try Run.parse(run_help.args, .{})).help);
+        try t.expectError(error.UnexpectedValue, Run.parse(&.{name ++ "=1"}, .{}));
+    }
 
     const run_parsed = parse(&.{"echo hello"}).?;
     try t.expectEqual(Command.run, run_parsed.command);
