@@ -7,6 +7,7 @@ const command = @import("command.zig");
 const instruction = @import("instruction.zig");
 const Child = @import("Child.zig");
 const excerpt = @import("excerpt.zig");
+const Output = @import("Output.zig");
 
 const usage =
     \\Usage: fb [run] [options] '<command>'
@@ -31,6 +32,7 @@ const run_usage =
     \\Save stdout and stderr to files; report paths, sizes, and exit code on completion.
     \\
     \\Options:
+    \\  --json                   print results as JSON (cannot be used with --async)
     \\  -a, --async               print the output paths before the command starts
     \\  -t, --timeout <duration>  kill the command after the duration (30s, 5m, 2h)
     \\  -d, --head <n>            print the first n lines of stdout and stderr afterwards
@@ -192,14 +194,19 @@ fn run(
 
     // With --async the paths are reported before spawning so a caller can follow
     // the output while the command is still running.
-    const sep = std.fs.path.sep;
-    const paths_format = "stdout: {s}{c}{s}{c}{s}{c}{s}\nstderr: {s}{c}{s}{c}{s}{c}{s}\n";
-    const paths_args = .{
-        temp_path, sep, parent_dirname, sep, name, sep, stdout_filename,
-        temp_path, sep, parent_dirname, sep, name, sep, stderr_filename,
+    const output_path = try std.fs.path.join(arena, &.{ temp_path, parent_dirname, &name });
+    var output_stdout: Output.Stream = .{
+        .path = output_path,
+        .filename = stdout_filename,
+        .lines = parsed.stdout,
+    };
+    var output_stderr: Output.Stream = .{
+        .path = output_path,
+        .filename = stderr_filename,
+        .lines = parsed.stderr,
     };
     if (parsed.async) {
-        try stdout.print(paths_format, paths_args);
+        try Output.writePaths(output_stdout, output_stderr, stdout);
         try stdout.flush();
     }
 
@@ -217,29 +224,23 @@ fn run(
         try stderr.print("fb: command timed out after {f} and was killed\n", .{parsed.timeout.?});
     }
 
-    if (!parsed.async) try stdout.print(paths_format, paths_args);
-    try stdout.print("stdout size: {d} bytes\nstderr size: {d} bytes\n", .{
-        (try stdout_file.stat(io)).size,
-        (try stderr_file.stat(io)).size,
-    });
-    try writeExcerpt(io, output_dir, stdout_filename, parsed.stdout, stdout);
-    try writeExcerpt(io, output_dir, stderr_filename, parsed.stderr, stdout);
-    if (!parsed.stdout.isEmpty() or !parsed.stderr.isEmpty()) try stdout.writeAll("--- end ---\n");
-    try stdout.print("exit code: {d}\n", .{status.code});
+    output_stdout.size = (try stdout_file.stat(io)).size;
+    output_stderr.size = (try stderr_file.stat(io)).size;
+    const output: Output = .{
+        .stdout = output_stdout,
+        .stderr = output_stderr,
+        .exit_code = status.code,
+        .timed_out = status.timed_out,
+    };
+    if (parsed.style == .text and !parsed.async) try Output.writePaths(output_stdout, output_stderr, stdout);
+    try output.writeReport(io, output_dir, parsed.style, stdout);
     return status.code;
-}
-
-fn writeExcerpt(io: std.Io, output_dir: std.Io.Dir, filename: []const u8, lines: excerpt.Excerpt, out: *std.Io.Writer) !void {
-    if (lines.isEmpty()) return;
-
-    const file = try output_dir.openFile(io, filename, .{});
-    defer file.close(io);
-    try excerpt.write(io, file, lines, filename, out);
 }
 
 test {
     _ = command;
     _ = excerpt;
+    _ = Output;
     _ = Child;
     _ = dir;
     _ = shell;

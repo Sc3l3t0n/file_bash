@@ -1,5 +1,7 @@
 const std = @import("std");
-const Excerpt = @import("excerpt.zig").Excerpt;
+const excerpt = @import("excerpt.zig");
+const Output = @import("Output.zig");
+const Excerpt = excerpt.Excerpt;
 
 pub const Command = enum {
     run,
@@ -48,6 +50,7 @@ pub fn parse(args: []const [:0]const u8) ?Parsed {
 
 pub const Run = struct {
     help: bool = false,
+    style: Output.Style = .text,
     source: []const u8,
     timeout: ?std.Io.Duration,
     /// Print the output paths before the command starts instead of after it exits.
@@ -58,6 +61,7 @@ pub const Run = struct {
     stderr: Excerpt,
 
     pub const Error = error{
+        ConflictingOutputFlags,
         MissingCommand,
         MissingValue,
         InvalidTimeout,
@@ -77,6 +81,7 @@ pub const Run = struct {
 
         pub fn write(diagnostic: Diagnostic, err: Error, out: *std.Io.Writer) !void {
             switch (err) {
+                error.ConflictingOutputFlags => try out.writeAll("--async and --json cannot be used together"),
                 error.MissingCommand => try out.writeAll("missing command; pass one quoted shell command after the options"),
                 error.MissingValue => try out.print("option '{s}' requires a value", .{diagnostic.argument}),
                 error.InvalidTimeout => try out.print("invalid timeout '{s}' for '{s}'; use a positive integer with ms, s, m, or h (for example, 30s); bare integers mean seconds; maximum count is 4294967295", .{ diagnostic.value, diagnostic.argument }),
@@ -97,6 +102,7 @@ pub const Run = struct {
         help,
         timeout,
         async,
+        json,
         head,
         tail,
         out_head,
@@ -109,6 +115,7 @@ pub const Run = struct {
             .{ "--timeout", .timeout },
             .{ "-a", .async },
             .{ "--async", .async },
+            .{ "--json", .json },
             .{ "-h", .help },
             .{ "--help", .help },
             .{ "-d", .head },
@@ -126,7 +133,10 @@ pub const Run = struct {
         });
 
         fn takesValue(option: Option) bool {
-            return option != .async and option != .help;
+            return switch (option) {
+                .async, .help, .json => false,
+                else => true,
+            };
         }
     };
 
@@ -177,6 +187,7 @@ pub const Run = struct {
                 },
                 .timeout => run.timeout = try parseTimeout(value),
                 .async => run.async = true,
+                .json => run.style = .json,
                 .head => {
                     if (head_scope == .individual) {
                         if (opts.diagnostic) |diagnostic| diagnostic.conflicting = head_flag;
@@ -219,6 +230,8 @@ pub const Run = struct {
                 },
             }
         }
+
+        if (run.async and run.style == .json) return error.ConflictingOutputFlags;
 
         if (rest.len == 0) return error.MissingCommand;
         if (rest.len > 1) {
@@ -506,4 +519,19 @@ test "command parsing" {
     const uninst = parse(&.{ "uninstall", "agents" }).?;
     try t.expectEqual(Command.uninstall, uninst.command);
     try t.expectEqualStrings("agents", uninst.args[0]);
+}
+
+test "json output option" {
+    const t = std.testing;
+
+    try t.expectEqual(.text, (try Run.parse(&.{"true"}, .{})).style);
+    try t.expectEqual(.json, (try Run.parse(&.{ "--json", "true" }, .{})).style);
+    try t.expectError(error.UnexpectedValue, Run.parse(&.{ "--json=true", "true" }, .{}));
+}
+
+test "async and json are mutually exclusive" {
+    const t = std.testing;
+
+    try t.expectError(error.ConflictingOutputFlags, Run.parse(&.{ "--async", "--json", "true" }, .{}));
+    try t.expectError(error.ConflictingOutputFlags, Run.parse(&.{ "--json", "--async", "true" }, .{}));
 }

@@ -68,6 +68,21 @@ fb run --tail 20 'zig build test'
 fb run -o:l 5 -e:l=50 'make'
 ```
 
+`--json` prints one JSON object on completion instead of the text report.
+It cannot be combined with `--async`. Both streams contain `path` and `size`
+(in bytes), plus `head` and/or `tail` when requested. The result includes
+`exit_code` and `timed_out`; fb still returns the command's exit code.
+Excerpts keep the text style's final newline. Paths and excerpts are always JSON
+strings: valid UTF-8 is preserved, and invalid bytes become `\u00XX` escapes.
+These escapes map bytes to Unicode characters for display, not a lossless binary
+encoding. Both output styles stream excerpts without buffering the entire value.
+The saved files always retain the original bytes.
+Diagnostics go to stderr.
+
+```sh
+fb run --json --head 3 'echo hello'
+```
+
 `--timeout <duration>` kills the command when it runs too long. `-t` is the
 short form, and both accept the value as a separate argument or after `=`:
 

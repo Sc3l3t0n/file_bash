@@ -21,3 +21,6 @@
   instruction files must preserve surrounding content, be reversible and
   idempotent, and reject ambiguous section markers before writing.
 - call allocators arena or gpa instead of allocator or alloc
+- Declare `@import` bindings at file scope; use the named bindings in declarations
+  and functions instead of inline imports.
+- use `const t = std.testing` in tests

@@ -24,7 +24,7 @@ pub fn write(io: std.Io, file: std.Io.File, excerpt: Excerpt, label: []const u8,
     }
 }
 
-fn head(io: std.Io, file: std.Io.File, count: u32, out: *std.Io.Writer) !void {
+pub fn head(io: std.Io, file: std.Io.File, count: u32, out: *std.Io.Writer) !void {
     var buffer: [chunk_size]u8 = undefined;
     var offset: u64 = 0;
     var remaining = count;
@@ -50,7 +50,7 @@ fn head(io: std.Io, file: std.Io.File, count: u32, out: *std.Io.Writer) !void {
     if (last != '\n') try out.writeByte('\n');
 }
 
-fn tail(io: std.Io, file: std.Io.File, count: u32, out: *std.Io.Writer) !void {
+pub fn tail(io: std.Io, file: std.Io.File, count: u32, out: *std.Io.Writer) !void {
     var buffer: [chunk_size]u8 = undefined;
     const size = (try file.stat(io)).size;
     if (size == 0) return;
