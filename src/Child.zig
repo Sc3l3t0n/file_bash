@@ -8,6 +8,8 @@ timeout: ?std.Io.Duration,
 
 pub const Options = struct {
     argv: []const []const u8,
+    /// Inherited by the child after the non-interactive overrides are applied.
+    environ: *const std.process.Environ.Map,
     stdout: std.Io.File,
     stderr: std.Io.File,
     /// Kills the command once the duration elapses; unbounded when null.
@@ -15,10 +17,14 @@ pub const Options = struct {
 };
 
 /// Spawns the command with its output streams redirected to the given files.
-pub fn spawn(io: std.Io, options: Options) !Child {
+/// The child environment is allocated in `arena`.
+pub fn spawn(io: std.Io, arena: std.mem.Allocator, options: Options) !Child {
+    var environ = try nonInteractive(arena, options.environ);
+
     return .{
         .process = try std.process.spawn(io, .{
             .argv = options.argv,
+            .environ_map = &environ,
             .stdout = .{ .file = options.stdout },
             .stderr = .{ .file = options.stderr },
             // A timed run leads its own process group so a timeout can kill
@@ -84,6 +90,65 @@ fn waitTimeout(child: *Child, io: std.Io, timeout: std.Io.Duration) !Status {
                 .expired => unreachable,
             };
         },
+    }
+}
+
+const Override = struct { key: []const u8, value: []const u8 };
+
+/// Nothing is attached to a terminal and no prompt can be answered, so tell
+/// commands that up front instead of letting them wait for input or emit
+/// escape sequences into the output files.
+const shared_overrides = [_]Override{
+    .{ .key = "NO_COLOR", .value = "1" },
+    .{ .key = "CLICOLOR", .value = "0" },
+    .{ .key = "GIT_TERMINAL_PROMPT", .value = "0" },
+};
+
+const unix_overrides = shared_overrides ++ [_]Override{
+    .{ .key = "TERM", .value = "dumb" },
+    .{ .key = "PAGER", .value = "cat" },
+    .{ .key = "GIT_PAGER", .value = "cat" },
+};
+
+const linux_overrides = unix_overrides ++ [_]Override{
+    .{ .key = "DEBIAN_FRONTEND", .value = "noninteractive" },
+};
+
+const overrides: []const Override = switch (builtin.os.tag) {
+    .linux => &linux_overrides,
+    .macos => &unix_overrides,
+    // `cmd.exe` and PowerShell have no `TERM` or pager conventions.
+    .windows => &shared_overrides,
+    else => &shared_overrides,
+};
+
+/// Copies `parent` and applies the overrides, which always win over inherited
+/// values.
+fn nonInteractive(
+    arena: std.mem.Allocator,
+    parent: *const std.process.Environ.Map,
+) !std.process.Environ.Map {
+    var map = try parent.clone(arena);
+    for (overrides) |override| try map.put(override.key, override.value);
+
+    return map;
+}
+
+test "child environment is non-interactive" {
+    var parent: std.process.Environ.Map = .init(std.testing.allocator);
+    defer parent.deinit();
+
+    try parent.put("PATH", "/usr/bin");
+    try parent.put("NO_COLOR", "0");
+
+    var child_environ = try nonInteractive(std.testing.allocator, &parent);
+    defer child_environ.deinit();
+
+    try std.testing.expectEqualStrings("/usr/bin", child_environ.get("PATH").?);
+    // Only `PATH` is inherited; `NO_COLOR` is replaced rather than duplicated.
+    try std.testing.expectEqual(overrides.len + 1, child_environ.count());
+    for (overrides) |override| {
+        try std.testing.expectEqualStrings(override.value, child_environ.get(override.key).?);
     }
 }
 

@@ -135,8 +135,9 @@ fn run(
     try stdout.flush();
 
     const shell_argv = try shell.command(environ, parsed.source);
-    var child = try Child.spawn(io, .{
+    var child = try Child.spawn(io, arena, .{
         .argv = shell_argv.slice(),
+        .environ = environ,
         .stdout = stdout_file,
         .stderr = stderr_file,
         .timeout = parsed.timeout,

@@ -40,6 +40,13 @@ Output goes directly to
 the files while the command runs. Files remain after exit until you remove them
 or the system cleans its temporary directory.
 
+The child runs with a non-interactive environment: fb inherits the parent
+environment and then overrides `NO_COLOR=1`, `CLICOLOR=0`, and
+`GIT_TERMINAL_PROMPT=0` everywhere, plus `TERM=dumb`, `PAGER=cat`, and
+`GIT_PAGER=cat` on Linux/macOS and `DEBIAN_FRONTEND=noninteractive` on Linux.
+These overrides win over inherited values, so commands do not wait for a prompt
+or write escape sequences into the output files.
+
 `--timeout <duration>` kills the command when it runs too long. `-t` is the
 short form, and both accept the value as a separate argument or after `=`:
 
