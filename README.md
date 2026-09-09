@@ -30,7 +30,7 @@ value is an error. `cmd` and `powershell` are available only on Windows; `pwsh`
 is cross-platform. The selected shell must be available on `PATH`.
 
 The runner prints the absolute paths to separate `stdout` and `stderr` files in a
-unique `file_bash-*` directory under the temporary directory before the command
+unique directory under `file_bash/` in the temporary directory before the command
 starts, so the files can be followed while it runs, and prints the exit code once
 it finishes.
 Linux/macOS use `TMPDIR`, falling back to `/tmp`. Windows checks `TMP`, then `TEMP`,
