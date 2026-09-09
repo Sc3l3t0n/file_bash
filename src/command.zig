@@ -46,6 +46,8 @@ pub const Run = struct {
         MissingValue,
         InvalidTimeout,
         InvalidLineCount,
+        ConflictingHeadFlags,
+        ConflictingTailFlags,
         UnknownFlag,
         UnexpectedValue,
         UnexpectedArgument,
@@ -89,6 +91,9 @@ pub const Run = struct {
     /// command source, borrowing the argument slices.
     pub fn parse(args: []const [:0]const u8) Error!Run {
         var run: Run = .{ .source = "", .timeout = null, .async = false, .stdout = .{}, .stderr = .{} };
+        const Scope = enum { none, both, individual };
+        var head_scope: Scope = .none;
+        var tail_scope: Scope = .none;
         var rest = args;
 
         while (rest.len > 0 and std.mem.startsWith(u8, rest[0], "-")) {
@@ -117,17 +122,29 @@ pub const Run = struct {
                 .timeout => run.timeout = try parseTimeout(value),
                 .async => run.async = true,
                 .head => {
+                    if (head_scope == .individual) return error.ConflictingHeadFlags;
+                    head_scope = .both;
                     run.stdout.head = try parseLineCount(value);
                     run.stderr.head = run.stdout.head;
                 },
                 .tail => {
+                    if (tail_scope == .individual) return error.ConflictingTailFlags;
+                    tail_scope = .both;
                     run.stdout.tail = try parseLineCount(value);
                     run.stderr.tail = run.stdout.tail;
                 },
-                .out_head => run.stdout.head = try parseLineCount(value),
-                .out_tail => run.stdout.tail = try parseLineCount(value),
-                .err_head => run.stderr.head = try parseLineCount(value),
-                .err_tail => run.stderr.tail = try parseLineCount(value),
+                inline .out_head, .err_head => |selected| {
+                    if (head_scope == .both) return error.ConflictingHeadFlags;
+                    head_scope = .individual;
+                    const stream = if (selected == .out_head) &run.stdout else &run.stderr;
+                    stream.head = try parseLineCount(value);
+                },
+                inline .out_tail, .err_tail => |selected| {
+                    if (tail_scope == .both) return error.ConflictingTailFlags;
+                    tail_scope = .individual;
+                    const stream = if (selected == .out_tail) &run.stdout else &run.stderr;
+                    stream.tail = try parseLineCount(value);
+                },
             }
         }
 
@@ -215,10 +232,6 @@ test "run argument parsing" {
     try t.expectEqual(Excerpt{ .head = 1, .tail = 8 }, single.stdout);
     try t.expectEqual(Excerpt{ .head = 4, .tail = 2 }, single.stderr);
 
-    const override = try Run.parse(&.{ "--head", "3", "-e:h", "9", "echo hello" });
-    try t.expectEqual(Excerpt{ .head = 3 }, override.stdout);
-    try t.expectEqual(Excerpt{ .head = 9 }, override.stderr);
-
     try t.expectError(error.MissingValue, Run.parse(&.{"-h"}));
     inline for (.{ "0", "", "-1", "x", "1s" }) |invalid| {
         try t.expectError(error.InvalidLineCount, Run.parse(&.{ "--tail", invalid, "echo hello" }));
@@ -257,6 +270,102 @@ test "run argument parsing" {
     inline for (.{ "0", "0s", "", "s", "-5", "5x", "5 s" }) |invalid| {
         try t.expectError(error.InvalidTimeout, Run.parse(&.{ "--timeout", invalid, "echo hello" }));
     }
+}
+
+test "head flag scopes are mutually exclusive" {
+    const t = std.testing;
+
+    inline for (.{ "--head", "-h" }) |general| {
+        const both = try Run.parse(&.{ general, "3", "echo hello" });
+        try t.expectEqual(Excerpt{ .head = 3 }, both.stdout);
+        try t.expectEqual(Excerpt{ .head = 3 }, both.stderr);
+
+        inline for (.{ "--out:head", "-o:h", "--err:head", "-e:h" }) |specific| {
+            try t.expectError(error.ConflictingHeadFlags, Run.parse(&.{ general, "3", specific, "9", "echo hello" }));
+            try t.expectError(error.ConflictingHeadFlags, Run.parse(&.{ specific, "9", general, "3", "echo hello" }));
+            try t.expectError(error.ConflictingHeadFlags, Run.parse(&.{ general ++ "=3", specific ++ "=9", "echo hello" }));
+            try t.expectError(error.ConflictingHeadFlags, Run.parse(&.{ specific ++ "=9", general ++ "=3", "echo hello" }));
+        }
+    }
+
+    inline for (.{ "--out:head", "-o:h" }) |out| {
+        const stdout = try Run.parse(&.{ out, "3", "echo hello" });
+        try t.expectEqual(Excerpt{ .head = 3 }, stdout.stdout);
+        try t.expectEqual(Excerpt{}, stdout.stderr);
+
+        inline for (.{ "--err:head", "-e:h" }) |err| {
+            const stderr = try Run.parse(&.{ err, "9", "echo hello" });
+            try t.expectEqual(Excerpt{}, stderr.stdout);
+            try t.expectEqual(Excerpt{ .head = 9 }, stderr.stderr);
+
+            const both = try Run.parse(&.{ out, "3", err, "9", "echo hello" });
+            const reversed = try Run.parse(&.{ err ++ "=9", out ++ "=3", "echo hello" });
+            try t.expectEqual(Excerpt{ .head = 3 }, both.stdout);
+            try t.expectEqual(Excerpt{ .head = 9 }, both.stderr);
+            try t.expectEqual(both.stdout, reversed.stdout);
+            try t.expectEqual(both.stderr, reversed.stderr);
+        }
+    }
+}
+
+test "tail flag scopes are mutually exclusive" {
+    const t = std.testing;
+
+    inline for (.{ "--tail", "-l" }) |general| {
+        const both = try Run.parse(&.{ general, "3", "echo hello" });
+        try t.expectEqual(Excerpt{ .tail = 3 }, both.stdout);
+        try t.expectEqual(Excerpt{ .tail = 3 }, both.stderr);
+
+        inline for (.{ "--out:tail", "-o:l", "--err:tail", "-e:l" }) |specific| {
+            try t.expectError(error.ConflictingTailFlags, Run.parse(&.{ general, "3", specific, "9", "echo hello" }));
+            try t.expectError(error.ConflictingTailFlags, Run.parse(&.{ specific, "9", general, "3", "echo hello" }));
+            try t.expectError(error.ConflictingTailFlags, Run.parse(&.{ general ++ "=3", specific ++ "=9", "echo hello" }));
+            try t.expectError(error.ConflictingTailFlags, Run.parse(&.{ specific ++ "=9", general ++ "=3", "echo hello" }));
+        }
+    }
+
+    inline for (.{ "--out:tail", "-o:l" }) |out| {
+        const stdout = try Run.parse(&.{ out, "3", "echo hello" });
+        try t.expectEqual(Excerpt{ .tail = 3 }, stdout.stdout);
+        try t.expectEqual(Excerpt{}, stdout.stderr);
+
+        inline for (.{ "--err:tail", "-e:l" }) |err| {
+            const stderr = try Run.parse(&.{ err, "9", "echo hello" });
+            try t.expectEqual(Excerpt{}, stderr.stdout);
+            try t.expectEqual(Excerpt{ .tail = 9 }, stderr.stderr);
+
+            const both = try Run.parse(&.{ out, "3", err, "9", "echo hello" });
+            const reversed = try Run.parse(&.{ err ++ "=9", out ++ "=3", "echo hello" });
+            try t.expectEqual(Excerpt{ .tail = 3 }, both.stdout);
+            try t.expectEqual(Excerpt{ .tail = 9 }, both.stderr);
+            try t.expectEqual(both.stdout, reversed.stdout);
+            try t.expectEqual(both.stderr, reversed.stderr);
+        }
+    }
+}
+
+test "repeated flags within a scope use the last count" {
+    const t = std.testing;
+
+    const both = try Run.parse(&.{ "--head=1", "-h=2", "--tail=3", "-l=4", "echo hello" });
+    try t.expectEqual(Excerpt{ .head = 2, .tail = 4 }, both.stdout);
+    try t.expectEqual(both.stdout, both.stderr);
+
+    const individual = try Run.parse(&.{ "--out:head=1", "-o:h=2", "--err:tail=3", "-e:l=4", "echo hello" });
+    try t.expectEqual(Excerpt{ .head = 2 }, individual.stdout);
+    try t.expectEqual(Excerpt{ .tail = 4 }, individual.stderr);
+}
+
+test "head and tail scopes are independent" {
+    const t = std.testing;
+
+    const head = try Run.parse(&.{ "--head", "3", "--out:tail", "5", "--err:tail", "7", "echo hello" });
+    try t.expectEqual(Excerpt{ .head = 3, .tail = 5 }, head.stdout);
+    try t.expectEqual(Excerpt{ .head = 3, .tail = 7 }, head.stderr);
+
+    const tail = try Run.parse(&.{ "--out:head", "5", "--err:head", "7", "--tail", "3", "echo hello" });
+    try t.expectEqual(Excerpt{ .head = 5, .tail = 3 }, tail.stdout);
+    try t.expectEqual(Excerpt{ .head = 7, .tail = 3 }, tail.stderr);
 }
 
 test "command parsing" {

@@ -50,7 +50,12 @@ or write escape sequences into the output files.
 `--head <n>` and `--tail <n>` (short `-h`, `-l`) print the first or last `n`
 lines of both output files after the command exits, each under a marker line.
 `--out:head`, `--out:tail`, `--err:head` and `--err:tail` (short `-o:h`, `-o:l`,
-`-e:h`, `-e:l`) restrict this to one file, and override the general flag for it:
+`-e:h`, `-e:l`) restrict this to one file. For each of head and tail, use either
+its general flag for both files or its individual flags. Combining `--head`
+with `--out:head` or `--err:head`, or `--tail` with `--out:tail` or `--err:tail`,
+is an error in either order. Either individual flag can be used alone, or both
+can be used together with different counts. Head and tail are independent:
+for example, `--head 3 --err:tail 10` is valid.
 
 ```sh
 fb run --tail 20 'zig build test'
