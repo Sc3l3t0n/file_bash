@@ -111,9 +111,13 @@ fn run(
     stdout: *std.Io.Writer,
     stderr: *std.Io.Writer,
 ) !u8 {
-    const parsed = command.Run.parse(args) catch |err| {
-        try stderr.print("fb: invalid run arguments: {s}\n", .{@errorName(err)});
-        try stderr.writeAll(usage);
+    var diagnostic: command.Run.Diagnostic = .{};
+    const parsed = command.Run.parse(args, .{ .diagnostic = &diagnostic }) catch |err| {
+        try diagnostic.write(err, stderr);
+        switch (err) {
+            error.MissingCommand, error.UnknownFlag => try stderr.writeAll(usage),
+            else => {},
+        }
         return 2;
     };
 
