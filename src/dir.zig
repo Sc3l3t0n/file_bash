@@ -1,6 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+pub const output_dirname = "file_bash";
+
 /// Returns a borrowed absolute path; does not allocate or create the directory.
 /// The environment map must remain alive while the returned path is in use.
 pub fn tempPath(environ: *const std.process.Environ.Map) ![]const u8 {

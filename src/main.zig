@@ -4,6 +4,7 @@ const build_options = @import("build_options");
 const dir = @import("dir.zig");
 const shell = @import("shell.zig");
 const command = @import("command.zig");
+const clean = @import("clean.zig");
 const instruction = @import("instruction.zig");
 const Child = @import("Child.zig");
 const excerpt = @import("excerpt.zig");
@@ -11,10 +12,12 @@ const Output = @import("Output.zig");
 
 const usage =
     \\Usage: fb [run] [options] '<command>'
+    \\       fb clean
     \\       fb install|init|uninstall [agents|claude]
     \\
     \\Commands:
     \\  run        run a shell command and save stdout and stderr to files (default)
+    \\  clean      remove all saved output from the temporary file_bash directory
     \\  install    install global fb instructions (alias: init)
     \\  uninstall  remove global fb instructions
     \\
@@ -50,7 +53,6 @@ const run_usage =
     \\
 ;
 
-const parent_dirname = "file_bash";
 const stdout_filename = "stdout";
 const stderr_filename = "stderr";
 
@@ -118,6 +120,7 @@ fn dispatch(
 
     return switch (parsed.command) {
         .run => run(io, arena, parsed.args, environ, stdout, stderr),
+        .clean => clean.execute(io, parsed.args, environ, stdout, stderr),
         .install, .uninstall => blk: {
             const target = instruction.Target.parse(parsed.args) orelse {
                 try stderr.writeAll(usage);
@@ -178,7 +181,7 @@ fn run(
     defer temp_dir.close(io);
 
     // All runs share one parent directory; it may already exist from earlier runs.
-    var parent_dir = try temp_dir.createDirPathOpen(io, parent_dirname, .{ .permissions = permissions });
+    var parent_dir = try temp_dir.createDirPathOpen(io, dir.output_dirname, .{ .permissions = permissions });
     defer parent_dir.close(io);
 
     const name = std.fmt.bytesToHex(random, .lower);
@@ -194,7 +197,7 @@ fn run(
 
     // With --async the paths are reported before spawning so a caller can follow
     // the output while the command is still running.
-    const output_path = try std.fs.path.join(arena, &.{ temp_path, parent_dirname, &name });
+    const output_path = try std.fs.path.join(arena, &.{ temp_path, dir.output_dirname, &name });
     var output_stdout: Output.Stream = .{
         .path = output_path,
         .filename = stdout_filename,
@@ -239,6 +242,7 @@ fn run(
 
 test {
     _ = command;
+    _ = clean;
     _ = excerpt;
     _ = Output;
     _ = Child;

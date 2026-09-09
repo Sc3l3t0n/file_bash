@@ -5,11 +5,13 @@ const Excerpt = excerpt.Excerpt;
 
 pub const Command = enum {
     run,
+    clean,
     install,
     uninstall,
 
     const names = std.StaticStringMap(Command).initComptime(.{
         .{ "run", .run },
+        .{ "clean", .clean },
         .{ "install", .install },
         .{ "init", .install },
         .{ "uninstall", .uninstall },

@@ -46,6 +46,11 @@ Output goes directly to
 the files while the command runs. Files remain after exit until you remove them
 or the system cleans its temporary directory.
 
+Run `fb clean` to remove all children of the temporary `file_bash` directory,
+including every run's saved output, while keeping the directory itself. It uses the same temporary-directory lookup
+as `run` and succeeds if `file_bash` is already absent. Stop running commands
+before cleaning their output. Use `fb clean --help` (or `-h`) for help.
+
 The child runs with a non-interactive environment: fb inherits the parent
 environment and then overrides `NO_COLOR=1`, `CLICOLOR=0`, and
 `GIT_TERMINAL_PROMPT=0` everywhere, plus `TERM=dumb`, `PAGER=cat`, and
