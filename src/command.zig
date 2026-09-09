@@ -30,6 +30,129 @@ pub fn parse(args: []const [:0]const u8) ?Parsed {
     return .{ .command = .run, .args = args };
 }
 
+pub const Run = struct {
+    source: []const u8,
+    timeout: ?std.Io.Duration,
+
+    pub const Error = error{
+        MissingCommand,
+        MissingTimeoutValue,
+        InvalidTimeout,
+        UnknownFlag,
+        UnexpectedArgument,
+    };
+
+    const timeout_flag = "--timeout";
+
+    /// Parses `run` arguments: optional flags followed by exactly one command
+    /// source, borrowing the argument slices.
+    pub fn parse(args: []const [:0]const u8) Error!Run {
+        var timeout: ?std.Io.Duration = null;
+        var rest = args;
+
+        while (rest.len > 0 and std.mem.startsWith(u8, rest[0], "-")) {
+            const flag = rest[0];
+            if (!std.mem.startsWith(u8, flag, timeout_flag)) return error.UnknownFlag;
+
+            if (flag.len == timeout_flag.len) {
+                if (rest.len < 2) return error.MissingTimeoutValue;
+                timeout = try parseTimeout(rest[1]);
+                rest = rest[2..];
+            } else if (flag[timeout_flag.len] == '=') {
+                timeout = try parseTimeout(flag[timeout_flag.len + 1 ..]);
+                rest = rest[1..];
+            } else return error.UnknownFlag;
+        }
+
+        if (rest.len == 0) return error.MissingCommand;
+        if (rest.len > 1) return error.UnexpectedArgument;
+
+        return .{ .source = rest[0], .timeout = timeout };
+    }
+};
+
+const Unit = enum {
+    milliseconds,
+    seconds,
+    minutes,
+    hours,
+
+    /// Every letter a suffix is spelled with; anything else is invalid.
+    const suffix_letters = "msh";
+
+    const suffixes = std.StaticStringMap(Unit).initComptime(.{
+        .{ "ms", .milliseconds },
+        .{ "s", .seconds },
+        .{ "m", .minutes },
+        .{ "h", .hours },
+    });
+
+    fn nanoseconds(unit: Unit) i96 {
+        return switch (unit) {
+            .milliseconds => std.time.ns_per_ms,
+            .seconds => std.time.ns_per_s,
+            .minutes => std.time.ns_per_min,
+            .hours => std.time.ns_per_hour,
+        };
+    }
+};
+
+/// Accepts a positive count with a `Unit` suffix; a bare count is seconds.
+fn parseTimeout(text: []const u8) Run.Error!std.Io.Duration {
+    const digits = std.mem.trimEnd(u8, text, Unit.suffix_letters);
+    const suffix = text[digits.len..];
+    const unit: Unit = if (suffix.len == 0)
+        .seconds
+    else
+        Unit.suffixes.get(suffix) orelse return error.InvalidTimeout;
+
+    return .fromNanoseconds(try amount(digits) * unit.nanoseconds());
+}
+
+fn amount(text: []const u8) Run.Error!i96 {
+    const value = std.fmt.parseUnsigned(u32, text, 10) catch return error.InvalidTimeout;
+    if (value == 0) return error.InvalidTimeout;
+
+    return value;
+}
+
+test "run argument parsing" {
+    const t = std.testing;
+
+    const bare = try Run.parse(&.{"echo hello"});
+    try t.expectEqualStrings("echo hello", bare.source);
+    try t.expectEqual(null, bare.timeout);
+
+    const cases = .{
+        .{ "30", std.time.ns_per_s * 30 },
+        .{ "30s", std.time.ns_per_s * 30 },
+        .{ "500ms", std.time.ns_per_ms * 500 },
+        .{ "5m", std.time.ns_per_min * 5 },
+        .{ "2h", std.time.ns_per_hour * 2 },
+    };
+    inline for (cases) |case| {
+        const separate = try Run.parse(&.{ "--timeout", case[0], "echo hello" });
+        const joined = try Run.parse(&.{ "--timeout=" ++ case[0], "echo hello" });
+        const expected: std.Io.Duration = .fromNanoseconds(case[1]);
+
+        try t.expectEqual(expected, separate.timeout.?);
+        try t.expectEqual(expected, joined.timeout.?);
+        try t.expectEqualStrings("echo hello", separate.source);
+        try t.expectEqualStrings("echo hello", joined.source);
+    }
+
+    try t.expectError(error.MissingCommand, Run.parse(&.{}));
+    try t.expectError(error.MissingCommand, Run.parse(&.{ "--timeout", "5" }));
+    try t.expectError(error.MissingTimeoutValue, Run.parse(&.{"--timeout"}));
+    try t.expectError(error.UnknownFlag, Run.parse(&.{ "--quiet", "echo hello" }));
+    try t.expectError(error.UnknownFlag, Run.parse(&.{ "--timeoutish=5", "echo hello" }));
+    try t.expectError(error.UnexpectedArgument, Run.parse(&.{ "echo hello", "extra" }));
+
+    inline for (.{ "0", "0s", "", "s", "-5", "5x", "5 s" }) |invalid| {
+        try t.expectError(error.InvalidTimeout, Run.parse(&.{ "--timeout", invalid, "echo hello" }));
+    }
+}
+
 test "command parsing" {
     const t = std.testing;
 

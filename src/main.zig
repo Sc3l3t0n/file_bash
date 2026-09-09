@@ -5,9 +5,10 @@ const dir = @import("dir.zig");
 const shell = @import("shell.zig");
 const command = @import("command.zig");
 const instruction = @import("instruction.zig");
+const Child = @import("Child.zig");
 
 const usage =
-    \\Usage: fb [run] '<command>'
+    \\Usage: fb [run] [--timeout <duration>] '<command>'
     \\       fb install|init|uninstall [agents|claude]
     \\       fb version
     \\
@@ -98,10 +99,11 @@ fn run(
     stdout: *std.Io.Writer,
     stderr: *std.Io.Writer,
 ) !u8 {
-    if (args.len == 0) {
+    const parsed = command.Run.parse(args) catch |err| {
+        try stderr.print("fb: invalid run arguments: {s}\n", .{@errorName(err)});
         try stderr.writeAll(usage);
         return 2;
-    }
+    };
 
     // Keep each run's files together and leave them available after exit.
     var random: [16]u8 = undefined;
@@ -132,25 +134,26 @@ fn run(
     });
     try stdout.flush();
 
-    const shell_argv = try shell.command(environ, args[0]);
-    var child = try std.process.spawn(io, .{
+    const shell_argv = try shell.command(environ, parsed.source);
+    var child = try Child.spawn(io, .{
         .argv = shell_argv.slice(),
-        .stdout = .{ .file = stdout_file },
-        .stderr = .{ .file = stderr_file },
+        .stdout = stdout_file,
+        .stderr = stderr_file,
+        .timeout = parsed.timeout,
     });
-    const term = try child.wait(io);
-    const code: u8 = switch (term) {
-        .exited => |code| code,
-        .signal, .stopped => |signal| @intCast(@min(255, 128 + @as(u32, @intFromEnum(signal)))),
-        .unknown => 1,
-    };
 
-    try stdout.print("exit code: {d}\n", .{code});
-    return code;
+    const status = try child.wait(io);
+    if (status.timed_out) {
+        try stderr.print("fb: command timed out after {f} and was killed\n", .{parsed.timeout.?});
+    }
+
+    try stdout.print("exit code: {d}\n", .{status.code});
+    return status.code;
 }
 
 test {
     _ = command;
+    _ = Child;
     _ = dir;
     _ = shell;
     _ = instruction;

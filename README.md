@@ -14,8 +14,8 @@ passed to `run`. An explicit `run` treats the next argument as shell source,
 even if it matches a command name.
 
 The shell source is executed by `sh -c` on Linux/macOS and
-`cmd.exe /d /s /c` on Windows. Quote the entire command;
-additional arguments are ignored. Standard input is inherited.
+`cmd.exe /d /s /c` on Windows. Quote the entire command; a second command
+argument is an error. Standard input is inherited.
 
 Set `FILE_BASH_SHELL` to select another command interpreter. Supported values
 are `sh`, `bash`, `zsh`, `fish`, `nu`, `cmd`, `powershell`, and `pwsh`. For
@@ -40,8 +40,26 @@ Output goes directly to
 the files while the command runs. Files remain after exit until you remove them
 or the system cleans its temporary directory.
 
+`--timeout <duration>` (or `--timeout=<duration>`) kills the command when it
+runs too long:
+
+```sh
+fb run --timeout 30s 'zig build'
+fb run --timeout 500ms 'sleep 5'
+```
+
+The duration is a positive count with a `ms`, `s`, `m`, or `h` suffix; a bare
+count means seconds. A timed command is killed with `SIGKILL` once the duration
+elapses, the runner reports the timeout on stderr, and the exit code is 124,
+matching `timeout(1)`. Output written before the kill stays in the files.
+On Linux/macOS a timed command leads its own process group and the whole group
+is killed, so descendant processes do not survive the timeout; on Windows only
+the shell process is terminated. Without `--timeout` the command runs
+unbounded and keeps receiving the terminal's signals.
+
 The runner returns the command's exit code (or 128 + signal, capped at 255, when
-terminated by a signal). Missing arguments return 2; runner errors return 1.
+terminated by a signal). Missing or invalid arguments return 2; runner errors
+return 1.
 
 Install minimal fb instructions globally (ensure `fb` is on `PATH`):
 
