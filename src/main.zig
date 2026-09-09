@@ -120,6 +120,18 @@ fn run(
     const stderr_file = try output_dir.createFile(io, stderr_filename, .{ .exclusive = true });
     defer stderr_file.close(io);
 
+    // Report the paths before spawning so a caller can follow the output while
+    // the command is still running.
+    try stdout.print("stdout: {s}{c}{s}\nstderr: {s}{c}{s}\n", .{
+        directory,
+        std.fs.path.sep,
+        stdout_filename,
+        directory,
+        std.fs.path.sep,
+        stderr_filename,
+    });
+    try stdout.flush();
+
     const shell_argv = try shell.command(environ, args[0]);
     var child = try std.process.spawn(io, .{
         .argv = shell_argv.slice(),
@@ -133,15 +145,7 @@ fn run(
         .unknown => 1,
     };
 
-    try stdout.print("exit code: {d}\nstdout: {s}{c}{s}\nstderr: {s}{c}{s}\n", .{
-        code,
-        directory,
-        std.fs.path.sep,
-        stdout_filename,
-        directory,
-        std.fs.path.sep,
-        stderr_filename,
-    });
+    try stdout.print("exit code: {d}\n", .{code});
     return code;
 }
 

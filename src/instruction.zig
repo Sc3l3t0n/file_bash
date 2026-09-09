@@ -26,8 +26,9 @@ const start = "<!-- fb:begin -->";
 const end = "<!-- fb:end -->";
 const content =
     \\Use `fb run '<command>'` for shell commands with verbose output (such as builds and tests).
-    \\Quote the entire command. fb prints the exit code and paths to stdout/stderr files;
-    \\inspect those files with targeted searches or bounded reads.
+    \\Quote the entire command. fb prints the stdout/stderr file paths before the command
+    \\starts and the exit code when it finishes; inspect those files with targeted
+    \\searches or bounded reads, even while the command is still running.
     \\The files remain available after the command exits.
 ;
 

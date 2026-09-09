@@ -29,8 +29,10 @@ An unset or empty value uses the platform default described above. An unknown
 value is an error. `cmd` and `powershell` are available only on Windows; `pwsh`
 is cross-platform. The selected shell must be available on `PATH`.
 
-The runner prints the exit code and absolute paths to separate `stdout` and
-`stderr` files in a unique `file_bash-*` directory under the temporary directory.
+The runner prints the absolute paths to separate `stdout` and `stderr` files in a
+unique `file_bash-*` directory under the temporary directory before the command
+starts, so the files can be followed while it runs, and prints the exit code once
+it finishes.
 Linux/macOS use `TMPDIR`, falling back to `/tmp`. Windows checks `TMP`, then `TEMP`,
 and reports an error if neither is set. Empty values are skipped; relative
 paths are rejected, and the selected temporary directory must already exist.
