@@ -6,7 +6,7 @@ Ideas gathered from using `fb` as an agent, ordered by expected impact.
 
 - [ ] `--tail N` / `--head N`: print the last or first N lines of each file inline
       after the exit code. Most runs are short or fail near the end.
-- [ ] Print line and byte counts per file, and state when stderr is empty, so the
+- [x] Print line and byte counts per file, and state when stderr is empty, so the
       agent knows whether to `cat` or `grep`.
 - [ ] Print the duration, to judge whether a timeout was reasonable.
 - [ ] `--json` summary line: paths, exit code, counts, duration.

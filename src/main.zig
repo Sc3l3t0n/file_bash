@@ -174,6 +174,10 @@ fn run(
     }
 
     if (!parsed.async) try stdout.print(paths_format, paths_args);
+    try stdout.print("stdout size: {d} bytes\nstderr size: {d} bytes\n", .{
+        (try stdout_file.stat(io)).size,
+        (try stderr_file.stat(io)).size,
+    });
     try writeExcerpt(io, output_dir, stdout_filename, parsed.stdout, stdout);
     try writeExcerpt(io, output_dir, stderr_filename, parsed.stderr, stdout);
     if (!parsed.stdout.isEmpty() or !parsed.stderr.isEmpty()) try stdout.writeAll("--- end ---\n");

@@ -31,8 +31,9 @@ is cross-platform. The selected shell must be available on `PATH`.
 
 The runner prints the absolute paths to separate `stdout` and `stderr` files in a
 unique directory under `file_bash/` in the temporary directory, followed by the
-exit code, once the command finishes. With `--async` (short form `-a`) the paths
+size of each file in bytes and the exit code, once the command finishes. With `--async` (short form `-a`) the paths
 are printed before the command starts, so the files can be followed while it runs.
+File sizes are always printed after the command finishes, after any requested excerpts.
 Linux/macOS use `TMPDIR`, falling back to `/tmp`. Windows checks `TMP`, then `TEMP`,
 and reports an error if neither is set. Empty values are skipped; relative
 paths are rejected, and the selected temporary directory must already exist.
