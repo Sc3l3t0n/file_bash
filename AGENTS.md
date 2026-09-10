@@ -16,7 +16,7 @@
   directly, using documented environment conventions and explicit errors when
   configuration is invalid rather than guessing alternative values.
 - Prepare buffered stdout/stderr writers in `main`; send user-facing errors to
-  stderr and use `fb` consistently in CLI messages.
+  stderr and use `fb` consistently in CLI messages. Do not prefix messages with `fb:`.
 - Keep generated agent instructions brief and actionable. Changes to user-owned
   instruction files must preserve surrounding content, be reversible and
   idempotent, and reject ambiguous section markers before writing.

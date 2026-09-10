@@ -46,8 +46,28 @@ Output goes directly to
 the files while the command runs. Files remain after exit until you remove them
 or the system cleans its temporary directory.
 
+Run `fb last` to report the latest run's output again without rerunning the command.
+`fb last --help` explains this behavior and where the run ID is stored.
+It accepts `--json` and
+all of the head/tail options supported by `run`, including per-stream options
+and short aliases. Each invocation reads the output files and uses its own
+excerpt options; it does not reuse the original run's excerpt settings.
+
+```sh
+fb last --tail 20
+fb last --json --out:head 3 --err:tail 10
+```
+
+Each run writes only its ID to `file_bash/last` after successfully starting the shell.
+A failed start leaves the previous run ID unchanged.
+The run directory retains stdout, stderr, and a two-byte `status` file containing
+the exit code and timeout flag. Both `run` and `last` build reports from these
+files and return the command's exit code. Overlapping runs select the most
+recently started run. If no run is saved or its completion status is unavailable,
+`last` reports an error and returns 1.
+
 Run `fb clean` to remove all children of the temporary `file_bash` directory,
-including every run's saved output, while keeping the directory itself. It uses the same temporary-directory lookup
+including every run's saved output, completion status, and the `last` file, while keeping the directory itself. It uses the same temporary-directory lookup
 as `run` and succeeds if `file_bash` is already absent. Stop running commands
 before cleaning their output. Use `fb clean --help` (or `-h`) for help.
 

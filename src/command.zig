@@ -5,12 +5,14 @@ const Excerpt = excerpt.Excerpt;
 
 pub const Command = enum {
     run,
+    last,
     clean,
     install,
     uninstall,
 
     const names = std.StaticStringMap(Command).initComptime(.{
         .{ "run", .run },
+        .{ "last", .last },
         .{ "clean", .clean },
         .{ "install", .install },
         .{ "init", .install },
@@ -80,6 +82,7 @@ pub const Run = struct {
         argument: []const u8 = "",
         value: []const u8 = "",
         conflicting: []const u8 = "",
+        command: Command = .run,
 
         pub fn write(diagnostic: Diagnostic, err: Error, out: *std.Io.Writer) !void {
             switch (err) {
@@ -92,9 +95,9 @@ pub const Run = struct {
                     const kind = if (err == error.ConflictingHeadFlags) "head" else "tail";
                     try out.print("option '{s}' conflicts with '{s}'; use --{s} for both outputs, or --out:{s} and/or --err:{s} for individual outputs", .{ diagnostic.argument, diagnostic.conflicting, kind, kind, kind });
                 },
-                error.UnknownFlag => try out.print("unknown run option '{s}'; options must come before the quoted command", .{diagnostic.argument}),
+                error.UnknownFlag => try out.print("unknown {s} option '{s}'", .{ @tagName(diagnostic.command), diagnostic.argument }),
                 error.UnexpectedValue => try out.print("option '{s}' does not take a value", .{diagnostic.argument}),
-                error.UnexpectedArgument => try out.print("unexpected argument '{s}'; pass exactly one quoted shell command, with all fb options before it", .{diagnostic.argument}),
+                error.UnexpectedArgument => try out.print("unexpected argument '{s}'; {s}", .{ diagnostic.argument, if (diagnostic.command == .last) "fb last takes only reporting options" else "pass exactly one quoted shell command, with all fb options before it" }),
             }
             try out.writeByte('\n');
         }
@@ -148,7 +151,16 @@ pub const Run = struct {
 
     /// Parses `run` arguments, borrowing their slices and optionally recording diagnostics.
     pub fn parse(args: []const [:0]const u8, opts: ParseOptions) Error!Run {
-        if (opts.diagnostic) |diagnostic| diagnostic.* = .{};
+        return parseFor(.run, args, opts);
+    }
+
+    /// Parses reporting options without shell source. Argument slices are borrowed.
+    pub fn parseLast(args: []const [:0]const u8, opts: ParseOptions) Error!Run {
+        return parseFor(.last, args, opts);
+    }
+
+    fn parseFor(comptime selected_command: Command, args: []const [:0]const u8, opts: ParseOptions) Error!Run {
+        if (opts.diagnostic) |diagnostic| diagnostic.* = .{ .command = selected_command };
         var run: Run = .{ .source = "", .timeout = null, .async = false, .stdout = .{}, .stderr = .{} };
         const Scope = enum { none, both, individual };
         var head_scope: Scope = .none;
@@ -161,8 +173,10 @@ pub const Run = struct {
             const flag = rest[0];
             const separator = std.mem.indexOfScalar(u8, flag, '=');
             const name = flag[0 .. separator orelse flag.len];
-            if (opts.diagnostic) |diagnostic| diagnostic.* = .{ .argument = name };
+            if (opts.diagnostic) |diagnostic| diagnostic.* = .{ .argument = name, .command = selected_command };
             const option = Option.names.get(name) orelse return error.UnknownFlag;
+
+            if (selected_command == .last and (option == .async or option == .timeout)) return error.UnknownFlag;
 
             // The value follows `=` or is the next argument.
             var value: []const u8 = "";
@@ -234,6 +248,14 @@ pub const Run = struct {
         }
 
         if (run.async and run.style == .json) return error.ConflictingOutputFlags;
+
+        if (selected_command == .last) {
+            if (rest.len != 0) {
+                if (opts.diagnostic) |diagnostic| diagnostic.argument = rest[0];
+                return error.UnexpectedArgument;
+            }
+            return run;
+        }
 
         if (rest.len == 0) return error.MissingCommand;
         if (rest.len > 1) {
@@ -536,4 +558,27 @@ test "async and json are mutually exclusive" {
 
     try t.expectError(error.ConflictingOutputFlags, Run.parse(&.{ "--async", "--json", "true" }, .{}));
     try t.expectError(error.ConflictingOutputFlags, Run.parse(&.{ "--json", "--async", "true" }, .{}));
+}
+
+test "last accepts reporting options without shell source" {
+    const t = std.testing;
+    try t.expectEqual(Command.last, parse(&.{"last"}).?.command);
+    const defaults = try Run.parseLast(&.{}, .{});
+    try t.expectEqual(Excerpt{}, defaults.stdout);
+    try t.expectEqual(Output.Style.text, defaults.style);
+
+    inline for (.{ "--head", "-d", "--tail", "-l", "--out:head", "-o:h", "--out:tail", "-o:l", "--err:head", "-e:h", "--err:tail", "-e:l" }) |flag| {
+        const run = try Run.parse(&.{ "--json", flag, "3", "echo hello" }, .{});
+        const last = try Run.parseLast(&.{ "--json", flag ++ "=3" }, .{});
+        try t.expectEqual(run.stdout, last.stdout);
+        try t.expectEqual(run.stderr, last.stderr);
+        try t.expectEqual(run.style, last.style);
+    }
+    try t.expectError(error.UnknownFlag, Run.parseLast(&.{"--async"}, .{}));
+    try t.expectError(error.UnknownFlag, Run.parseLast(&.{ "--timeout", "5s" }, .{}));
+    try t.expectError(error.UnexpectedArgument, Run.parseLast(&.{"echo hello"}, .{}));
+    try t.expectError(error.MissingValue, Run.parseLast(&.{"--head"}, .{}));
+    try t.expectError(error.InvalidLineCount, Run.parseLast(&.{"--tail=0"}, .{}));
+    try t.expectError(error.ConflictingHeadFlags, Run.parseLast(&.{ "--head=1", "--out:head=2" }, .{}));
+    try t.expectError(error.ConflictingTailFlags, Run.parseLast(&.{ "--err:tail=1", "--tail=2" }, .{}));
 }

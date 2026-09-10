@@ -15,7 +15,7 @@ Ideas gathered from using `fb` as an agent, ordered by expected impact.
 
 - [ ] `--name <name>`: write to a stable directory such as `/tmp/file_bash/<name>/`.
       Reruns overwrite; the path can be referenced without parsing output.
-- [ ] `fb last`: print the paths of the most recent run.
+- [x] `fb last`: print the paths of the most recent run.
 - [x] `fb clean`: remove old `file_bash-*` run directories.
 - [ ] further customization to `fb clean` like `--until` or `--since`
 

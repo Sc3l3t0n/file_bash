@@ -6,6 +6,9 @@ const Output = @This();
 
 pub const Style = enum { text, json };
 
+pub const stdout_filename = "stdout";
+pub const stderr_filename = "stderr";
+
 stdout: Stream,
 stderr: Stream,
 exit_code: u8,
@@ -18,6 +21,44 @@ pub const Stream = struct {
     size: u64 = 0,
     lines: excerpt.Excerpt = .{},
 };
+
+pub const Status = struct {
+    exit_code: u8,
+    timed_out: bool,
+
+    pub fn read(io: std.Io, directory: std.Io.Dir) !Status {
+        const status_file = try directory.openFile(io, "status", .{});
+        defer status_file.close(io);
+        var status: [3]u8 = undefined;
+        if (try status_file.readPositionalAll(io, &status, 0) != 2 or status[1] > 1) return error.InvalidRunStatus;
+        return .{ .exit_code = status[0], .timed_out = status[1] == 1 };
+    }
+
+    pub fn save(status: Status, io: std.Io, directory: std.Io.Dir) !void {
+        var file = try directory.createFileAtomic(io, "status", .{ .replace = true });
+        defer file.deinit(io);
+        try file.file.writeStreamingAll(io, &.{ status.exit_code, @intFromBool(status.timed_out) });
+        try file.replace(io);
+    }
+};
+
+/// Rebuild the report from the run's files using this invocation's excerpt options.
+pub fn read(io: std.Io, directory: std.Io.Dir, path: []const u8, stdout_lines: excerpt.Excerpt, stderr_lines: excerpt.Excerpt) !Output {
+    const status = try Status.read(io, directory);
+    var output: Output = .{
+        .stdout = .{ .path = path, .filename = stdout_filename, .lines = stdout_lines },
+        .stderr = .{ .path = path, .filename = stderr_filename, .lines = stderr_lines },
+        .exit_code = status.exit_code,
+        .timed_out = status.timed_out,
+    };
+    inline for (.{ "stdout", "stderr" }) |name| {
+        const stream = &@field(output, name);
+        const file = try directory.openFile(io, stream.filename, .{});
+        defer file.close(io);
+        stream.size = (try file.stat(io)).size;
+    }
+    return output;
+}
 
 pub fn writePaths(stdout: Stream, stderr: Stream, out: *std.Io.Writer) !void {
     try out.print("stdout: {s}{c}{s}\nstderr: {s}{c}{s}\n", .{
