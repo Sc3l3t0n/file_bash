@@ -4,19 +4,20 @@ Ideas gathered from using `fb` as an agent, ordered by expected impact.
 
 ## Save the follow-up read
 
-- [ ] `--tail N` / `--head N`: print the last or first N lines of each file inline
+- [x] `--tail N` / `--head N`: print the last or first N lines of each file inline
       after the exit code. Most runs are short or fail near the end.
 - [x] Print line and byte counts per file, and state when stderr is empty, so the
       agent knows whether to `cat` or `grep`.
 - [ ] Print the duration, to judge whether a timeout was reasonable.
-- [ ] `--json` summary line: paths, exit code, counts, duration.
+- [x] `--json` summary line: paths, exit code, counts, duration.
 
 ## Predictable paths and cleanup
 
 - [ ] `--name <name>`: write to a stable directory such as `/tmp/file_bash/<name>/`.
       Reruns overwrite; the path can be referenced without parsing output.
 - [ ] `fb last`: print the paths of the most recent run.
-- [ ] `fb clean`: remove old `file_bash-*` run directories.
+- [x] `fb clean`: remove old `file_bash-*` run directories.
+- [ ] further customization to `fb clean` like `--until` or `--since`
 
 ## Buffering (blocks "read while running")
 
@@ -27,7 +28,7 @@ Ideas gathered from using `fb` as an agent, ordered by expected impact.
 
 ## Safety for unattended use
 
-- [ ] `--stdin=null` (or close stdin by default): a command waiting on stdin hangs
+- [x] `--stdin=null` (or close stdin by default): a command waiting on stdin hangs
       an agent silently.
 - [ ] Per-file size cap with a truncation notice, so a looping process cannot fill
       the disk before the timeout fires.
