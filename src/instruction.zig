@@ -33,16 +33,15 @@ pub const Result = enum { added, updated, removed, unchanged };
 const start = "<!-- fb:begin -->";
 const end = "<!-- fb:end -->";
 const content =
-    \\Use `fb run '<command>'` for shell commands with verbose output (such as builds and tests).
-    \\Quote the entire command. fb prints the stdout/stderr file paths and the exit code
-    \\when the command finishes; inspect those files with targeted searches or bounded
-    \\reads. Add `-a` to print the paths before the command starts, so the files can be
-    \\followed while it is still running.
-    \\The files remain available after the command exits.
-    \\Add `-t <duration>` (such as `30s` or `5m`) to kill a command that may hang;
-    \\a timed-out run exits with code 124. Add `-l <n>` (or `-d <n>`) to print the last
-    \\(or first) n lines of both files after the command; `-o:l`/`-e:l` and `-o:d`/`-e:d`
-    \\do the same for only stdout or only stderr.
+    \\Run noisy or long shell commands (builds, tests, logs) as `fb run '<command>'` with the
+    \\whole command quoted. fb writes stdout and stderr to files and prints their paths, sizes,
+    \\and the exit code; read the files with grep, head, or tail instead of dumping them.
+    \\Add `-l <n>` to print the last n lines of each file inline, `-t <duration>` (30s, 5m) to
+    \\kill a hanging command (exit 124), `-a` to print the paths before the command starts so
+    \\the files can be followed while it runs, and `--json` for a machine-readable report.
+    \\`fb last` and `fb print <id>` re-report a saved run without rerunning it; `-n <name>`
+    \\gives a run a stable ID and path. Run `fb run --help`, `fb last --help`, or
+    \\`fb print --help` for all options.
 ;
 
 const block = start ++ "\n" ++ content ++ "\n" ++ end;
