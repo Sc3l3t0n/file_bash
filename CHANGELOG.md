@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-11
+
 First usable release. `fb` runs a shell command, writes stdout and stderr to
 separate files, and prints a compact report so long or noisy output stays easy
 to inspect. Aimed at coding agents, but works for humans too.
@@ -49,3 +51,4 @@ Linux, macOS, and Windows. Temporary directory resolution follows each
 platform's conventions.
 
 [Unreleased]: https://github.com/Sc3l3t0n/file_bash/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Sc3l3t0n/file_bash/releases/tag/v0.1.0
