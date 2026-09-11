@@ -8,6 +8,7 @@ const Excerpt = excerpt.Excerpt;
 pub const Command = enum {
     run,
     last,
+    print,
     clean,
     install,
     uninstall,
@@ -15,6 +16,7 @@ pub const Command = enum {
     const names = std.StaticStringMap(Command).initComptime(.{
         .{ "run", .run },
         .{ "last", .last },
+        .{ "print", .print },
         .{ "clean", .clean },
         .{ "install", .install },
         .{ "init", .install },
@@ -24,7 +26,7 @@ pub const Command = enum {
     fn acceptsOption(command: Command, option: Run.Option) bool {
         return switch (command) {
             .run => true,
-            .last => switch (option) {
+            .last, .print => switch (option) {
                 .async, .timeout, .name, .cwd => false,
                 else => true,
             },
@@ -83,6 +85,7 @@ pub const Run = struct {
     pub const Error = error{
         ConflictingOutputFlags,
         MissingCommand,
+        MissingRunId,
         MissingValue,
         InvalidTimeout,
         InvalidName,
@@ -106,6 +109,7 @@ pub const Run = struct {
             switch (err) {
                 error.ConflictingOutputFlags => try out.writeAll("--async and --json cannot be used together"),
                 error.MissingCommand => try out.writeAll("missing command; pass one quoted shell command after the options"),
+                error.MissingRunId => try out.writeAll("missing run ID; pass one saved run ID after the options"),
                 error.MissingValue => try out.print("option '{s}' requires a value", .{diagnostic.argument}),
                 error.InvalidName => {
                     try out.print("invalid run name '{s}'; use 1–64 ASCII letters, digits, hyphens, or underscores; last is reserved", .{diagnostic.value});
@@ -120,7 +124,11 @@ pub const Run = struct {
                 },
                 error.UnknownFlag => try out.print("unknown {s} option '{s}'", .{ @tagName(diagnostic.command), diagnostic.argument }),
                 error.UnexpectedValue => try out.print("option '{s}' does not take a value", .{diagnostic.argument}),
-                error.UnexpectedArgument => try out.print("unexpected argument '{s}'; {s}", .{ diagnostic.argument, if (diagnostic.command == .last) "fb last takes only reporting options" else "pass exactly one quoted shell command, with all fb options before it" }),
+                error.UnexpectedArgument => try out.print("unexpected argument '{s}'; {s}", .{ diagnostic.argument, switch (diagnostic.command) {
+                    .last => "fb last takes only reporting options",
+                    .print => "pass exactly one saved run ID, with all fb options before it",
+                    else => "pass exactly one quoted shell command, with all fb options before it",
+                } }),
             }
             try out.writeByte('\n');
         }
@@ -185,6 +193,11 @@ pub const Run = struct {
     /// Parses reporting options without shell source. Argument slices are borrowed.
     pub fn parseLast(args: []const [:0]const u8, opts: ParseOptions) Error!Run {
         return parseFor(.last, args, opts);
+    }
+
+    /// Parses reporting options followed by one saved run ID.
+    pub fn parsePrint(args: []const [:0]const u8, opts: ParseOptions) Error!Run {
+        return parseFor(.print, args, opts);
     }
 
     fn parseFor(comptime selected_command: Command, args: []const [:0]const u8, opts: ParseOptions) Error!Run {
@@ -290,6 +303,20 @@ pub const Run = struct {
                 if (opts.diagnostic) |diagnostic| diagnostic.argument = rest[0];
                 return error.UnexpectedArgument;
             }
+            return run;
+        }
+
+        if (selected_command == .print) {
+            if (rest.len == 0) return error.MissingRunId;
+            if (!dir.validRunName(rest[0])) {
+                if (opts.diagnostic) |diagnostic| diagnostic.value = rest[0];
+                return error.InvalidName;
+            }
+            if (rest.len > 1) {
+                if (opts.diagnostic) |diagnostic| diagnostic.argument = rest[1];
+                return error.UnexpectedArgument;
+            }
+            run.name = rest[0];
             return run;
         }
 
@@ -617,6 +644,19 @@ test "last accepts reporting options without shell source" {
     try t.expectError(error.InvalidLineCount, Run.parseLast(&.{"--tail=0"}, .{}));
     try t.expectError(error.ConflictingHeadFlags, Run.parseLast(&.{ "--head=1", "--out:head=2" }, .{}));
     try t.expectError(error.ConflictingTailFlags, Run.parseLast(&.{ "--err:tail=1", "--tail=2" }, .{}));
+}
+
+test "print accepts reporting options followed by one valid run ID" {
+    const t = std.testing;
+    try t.expectEqual(Command.print, parse(&.{ "print", "build_1" }).?.command);
+    const parsed = try Run.parsePrint(&.{ "--json", "--out:tail=3", "build_1" }, .{});
+    try t.expectEqual(Output.Style.json, parsed.style);
+    try t.expectEqual(@as(?u32, 3), parsed.stdout.tail);
+    try t.expectEqualStrings("build_1", parsed.name.?);
+    try t.expectError(error.MissingRunId, Run.parsePrint(&.{}, .{}));
+    try t.expectError(error.InvalidName, Run.parsePrint(&.{"../build"}, .{}));
+    try t.expectError(error.UnexpectedArgument, Run.parsePrint(&.{ "build", "extra" }, .{}));
+    try t.expectError(error.UnknownFlag, Run.parsePrint(&.{ "--name", "build", "saved" }, .{}));
 }
 
 test "named runs accept portable names and reject paths and reserved names" {

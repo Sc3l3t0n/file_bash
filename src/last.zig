@@ -2,6 +2,7 @@ const std = @import("std");
 const dir = @import("dir.zig");
 const command = @import("command.zig");
 const clean = @import("clean.zig");
+const report = @import("report.zig");
 const Output = @import("Output.zig");
 
 const usage =
@@ -61,24 +62,7 @@ pub fn execute(
         else => return err,
     };
     if (!dir.validRunName(id)) return error.InvalidLastRunId;
-    var directory = parent.openDir(io, id, .{}) catch |err| switch (err) {
-        error.FileNotFound => return unavailable(stderr),
-        else => return err,
-    };
-    defer directory.close(io);
-    const output_path = try std.fs.path.join(arena, &.{ temp_path, dir.output_dirname, id });
-    const output = Output.read(io, directory, output_path, parsed.stdout, parsed.stderr) catch |err| switch (err) {
-        error.FileNotFound => return unavailable(stderr),
-        else => return err,
-    };
-    if (parsed.style == .text) try Output.writePaths(output.stdout, output.stderr, stdout);
-    try output.writeReport(io, directory, parsed.style, stdout);
-    return output.exit_code;
-}
-
-fn unavailable(stderr: *std.Io.Writer) !u8 {
-    try stderr.writeAll("last run's output or completion status is unavailable\n");
-    return 1;
+    return report.report(io, arena, parent, temp_path, .{ .last = id }, parsed.style, parsed.stdout, parsed.stderr, stdout, stderr);
 }
 
 fn missing(stderr: *std.Io.Writer) !u8 {

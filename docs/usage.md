@@ -55,6 +55,15 @@ fb last --tail 20
 fb last --json --out:head 3 --err:tail 10
 ```
 
+Run `fb print [options] <id>` to report any saved run by its ID. It accepts the
+same JSON and excerpt options as `last`, returns the saved command's exit code,
+and does not rerun the command or change which run `last` selects.
+
+```sh
+fb print --tail 20 build
+fb print --json 0123456789abcdef0123456789abcdef
+```
+
 Each run writes only its ID to `file_bash/last` after successfully starting the
 shell. A failed start leaves the previous run ID unchanged. The run directory
 retains stdout, stderr, and a two-byte `status` file containing the exit code and

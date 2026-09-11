@@ -3,18 +3,22 @@ const build_options = @import("build_options");
 const command = @import("command.zig");
 const run = @import("run.zig");
 const last = @import("last.zig");
+const print = @import("print.zig");
+const report = @import("report.zig");
 const clean = @import("clean.zig");
 const instruction = @import("instruction.zig");
 
 const usage =
     \\Usage: fb [run] [options] '<command>'
     \\       fb last [options]
+    \\       fb print [options] <id>
     \\       fb clean
     \\       fb install|init|uninstall [agents|claude]
     \\
     \\Commands:
     \\  run        run a shell command and save stdout and stderr to files (default)
     \\  last       print saved output again without rerunning the command
+    \\  print      print a saved run by ID without rerunning the command
     \\  clean      remove all saved output from the temporary file_bash directory
     \\  install    install global fb instructions (alias: init)
     \\  uninstall  remove global fb instructions
@@ -92,6 +96,7 @@ fn dispatch(
     return switch (parsed.command) {
         .run => run.execute(io, arena, parsed.args, environ, stdout, stderr),
         .last => last.execute(io, arena, parsed.args, environ, stdout, stderr),
+        .print => print.execute(io, arena, parsed.args, environ, stdout, stderr),
         .clean => clean.execute(io, parsed.args, environ, stdout, stderr),
         .install, .uninstall => blk: {
             const target = instruction.Target.parse(parsed.args) orelse {
@@ -119,5 +124,7 @@ test {
     _ = command;
     _ = clean;
     _ = last;
+    _ = print;
+    _ = report;
     _ = instruction;
 }

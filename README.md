@@ -23,6 +23,7 @@ Pass a quoted shell command to `fb`:
 fb 'echo hello; echo error >&2; exit 7'
 fb run --tail 20 'zig build test'
 fb last
+fb print build
 fb clean
 ```
 
