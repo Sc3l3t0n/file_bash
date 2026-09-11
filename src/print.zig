@@ -14,9 +14,9 @@ const usage =
     \\  --json                    print results as JSON
     \\  -d, --head <n>            first n lines of stdout and stderr
     \\  -l, --tail <n>            last n lines of stdout and stderr
-    \\  -o:h, --out:head <n>      first n lines of stdout only
+    \\  -o:d, --out:head <n>      first n lines of stdout only
     \\  -o:l, --out:tail <n>      last n lines of stdout only
-    \\  -e:h, --err:head <n>      first n lines of stderr only
+    \\  -e:d, --err:head <n>      first n lines of stderr only
     \\  -e:l, --err:tail <n>      last n lines of stderr only
     \\  -h, --help                show this help
     \\

@@ -82,8 +82,8 @@ Stop running commands before cleaning their output. Use `fb clean --help` (or
 
 `--head <n>` and `--tail <n>` (short `-d`, `-l`) print the first or last `n`
 lines of both output files after the command exits, each under a marker line.
-`--out:head`, `--out:tail`, `--err:head`, and `--err:tail` (short `-o:h`,
-`-o:l`, `-e:h`, `-e:l`) restrict this to one file.
+`--out:head`, `--out:tail`, `--err:head`, and `--err:tail` (short `-o:d`,
+`-o:l`, `-e:d`, `-e:l`) restrict this to one file.
 
 For each of head and tail, use either its general flag for both files or its
 individual flags. Combining `--head` with `--out:head` or `--err:head`, or

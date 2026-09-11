@@ -185,11 +185,11 @@ pub const Run = struct {
             .{ "--head", .head },
             .{ "-l", .tail },
             .{ "--tail", .tail },
-            .{ "-o:h", .out_head },
+            .{ "-o:d", .out_head },
             .{ "--out:head", .out_head },
             .{ "-o:l", .out_tail },
             .{ "--out:tail", .out_tail },
-            .{ "-e:h", .err_head },
+            .{ "-e:d", .err_head },
             .{ "--err:head", .err_head },
             .{ "-e:l", .err_tail },
             .{ "--err:tail", .err_tail },
@@ -417,7 +417,7 @@ test "run argument parsing" {
     try t.expectEqual(Excerpt{ .head = 3, .tail = 7 }, both.stdout);
     try t.expectEqual(Excerpt{ .head = 3, .tail = 7 }, both.stderr);
 
-    const single = try Run.parse(.run, &.{ "-o:h", "1", "--err:tail", "2", "-e:h=4", "--out:tail=8", "echo hello" }, .{});
+    const single = try Run.parse(.run, &.{ "-o:d", "1", "--err:tail", "2", "-e:d=4", "--out:tail=8", "echo hello" }, .{});
     try t.expectEqual(Excerpt{ .head = 1, .tail = 8 }, single.stdout);
     try t.expectEqual(Excerpt{ .head = 4, .tail = 2 }, single.stderr);
 
@@ -469,7 +469,7 @@ test "head flag scopes are mutually exclusive" {
         try t.expectEqual(Excerpt{ .head = 3 }, both.stdout);
         try t.expectEqual(Excerpt{ .head = 3 }, both.stderr);
 
-        inline for (.{ "--out:head", "-o:h", "--err:head", "-e:h" }) |specific| {
+        inline for (.{ "--out:head", "-o:d", "--err:head", "-e:d" }) |specific| {
             try t.expectError(error.ConflictingHeadFlags, Run.parse(.run, &.{ general, "3", specific, "9", "echo hello" }, .{}));
             try t.expectError(error.ConflictingHeadFlags, Run.parse(.run, &.{ specific, "9", general, "3", "echo hello" }, .{}));
             try t.expectError(error.ConflictingHeadFlags, Run.parse(.run, &.{ general ++ "=3", specific ++ "=9", "echo hello" }, .{}));
@@ -477,12 +477,12 @@ test "head flag scopes are mutually exclusive" {
         }
     }
 
-    inline for (.{ "--out:head", "-o:h" }) |out| {
+    inline for (.{ "--out:head", "-o:d" }) |out| {
         const stdout = try Run.parse(.run, &.{ out, "3", "echo hello" }, .{});
         try t.expectEqual(Excerpt{ .head = 3 }, stdout.stdout);
         try t.expectEqual(Excerpt{}, stdout.stderr);
 
-        inline for (.{ "--err:head", "-e:h" }) |err| {
+        inline for (.{ "--err:head", "-e:d" }) |err| {
             const stderr = try Run.parse(.run, &.{ err, "9", "echo hello" }, .{});
             try t.expectEqual(Excerpt{}, stderr.stdout);
             try t.expectEqual(Excerpt{ .head = 9 }, stderr.stderr);
@@ -540,7 +540,7 @@ test "repeated flags within a scope use the last count" {
     try t.expectEqual(Excerpt{ .head = 2, .tail = 4 }, both.stdout);
     try t.expectEqual(both.stdout, both.stderr);
 
-    const individual = try Run.parse(.run, &.{ "--out:head=1", "-o:h=2", "--err:tail=3", "-e:l=4", "echo hello" }, .{});
+    const individual = try Run.parse(.run, &.{ "--out:head=1", "-o:d=2", "--err:tail=3", "-e:l=4", "echo hello" }, .{});
     try t.expectEqual(Excerpt{ .head = 2 }, individual.stdout);
     try t.expectEqual(Excerpt{ .tail = 4 }, individual.stderr);
 }
@@ -645,7 +645,7 @@ test "last accepts reporting options without shell source" {
     try t.expectEqual(Excerpt{}, defaults.stdout);
     try t.expectEqual(Output.Style.text, defaults.style);
 
-    inline for (.{ "--head", "-d", "--tail", "-l", "--out:head", "-o:h", "--out:tail", "-o:l", "--err:head", "-e:h", "--err:tail", "-e:l" }) |flag| {
+    inline for (.{ "--head", "-d", "--tail", "-l", "--out:head", "-o:d", "--out:tail", "-o:l", "--err:head", "-e:d", "--err:tail", "-e:l" }) |flag| {
         const run = try Run.parse(.run, &.{ "--json", flag, "3", "echo hello" }, .{});
         const last = try Run.parse(.last, &.{ "--json", flag ++ "=3" }, .{});
         try t.expectEqual(run.stdout, last.stdout);

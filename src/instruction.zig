@@ -41,7 +41,7 @@ const content =
     \\The files remain available after the command exits.
     \\Add `-t <duration>` (such as `30s` or `5m`) to kill a command that may hang;
     \\a timed-out run exits with code 124. Add `-l <n>` (or `-d <n>`) to print the last
-    \\(or first) n lines of both files after the command; `-o:l`/`-e:l` and `-o:h`/`-e:h`
+    \\(or first) n lines of both files after the command; `-o:l`/`-e:l` and `-o:d`/`-e:d`
     \\do the same for only stdout or only stderr.
 ;
 

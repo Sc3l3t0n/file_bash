@@ -20,9 +20,9 @@ const usage =
     \\  -t, --timeout <duration>  kill the command after the duration (30s, 5m, 2h)
     \\  -d, --head <n>            print the first n lines of stdout and stderr afterwards
     \\  -l, --tail <n>            print the last n lines of stdout and stderr afterwards
-    \\  -o:h, --out:head <n>      first n lines of stdout only
+    \\  -o:d, --out:head <n>      first n lines of stdout only
     \\  -o:l, --out:tail <n>      last n lines of stdout only
-    \\  -e:h, --err:head <n>      first n lines of stderr only
+    \\  -e:d, --err:head <n>      first n lines of stderr only
     \\  -e:l, --err:tail <n>      last n lines of stderr only
     \\  -h, --help                show this help
     \\
