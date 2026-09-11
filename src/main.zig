@@ -12,15 +12,15 @@ const usage =
     \\       fb last [options]
     \\       fb print [options] <id>
     \\       fb clean
-    \\       fb install|init|uninstall [agents|claude]
+    \\       fb install|init|uninstall [agents|claude|codex|antigravity|custom <path>]
     \\
     \\Commands:
     \\  run        run a shell command and save stdout and stderr to files (default)
     \\  last       print saved output again without rerunning the command
     \\  print      print a saved run by ID without rerunning the command
     \\  clean      remove all saved output from the temporary file_bash directory
-    \\  install    install global fb instructions (alias: init)
-    \\  uninstall  remove global fb instructions
+    \\  install    install fb instructions into a global agent file (alias: init)
+    \\  uninstall  remove fb instructions from a global agent file
     \\
     \\Options:
     \\  -h, --help     show this help
@@ -95,7 +95,8 @@ fn dispatch(
                 break :blk 2;
             };
 
-            const result = try instruction.update(io, arena, environ, target, parsed.command == .install);
+            const path = try target.path(arena, environ);
+            const result = try instruction.update(io, arena, path, parsed.command == .install);
             const message = switch (result) {
                 .added => "Added fb instructions to",
                 .updated => "Updated fb instructions in",
@@ -103,7 +104,7 @@ fn dispatch(
                 .unchanged => "No changes to fb instructions in",
             };
 
-            try stdout.print("{s} {s}\n", .{ message, target.filename() });
+            try stdout.print("{s} {s}\n", .{ message, path });
 
             break :blk 0;
         },

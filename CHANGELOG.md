@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `fb install codex` and `fb install antigravity` manage the `fb` section in
+  `~/.codex/AGENTS.md` and `~/.gemini/GEMINI.md`.
+- `fb install custom <path>` manages the `fb` section in any instruction file.
+  `uninstall` accepts the same targets.
+
+### Changed
+
+- `fb install` and `fb uninstall` report the full path of the edited file.
+
 ## [0.1.0] - 2026-09-11
 
 First usable release. `fb` runs a shell command, writes stdout and stderr to

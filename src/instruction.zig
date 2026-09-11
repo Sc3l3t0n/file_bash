@@ -1,29 +1,43 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const dir = @import("dir.zig");
 
-pub const Target = enum {
+pub const Named = enum {
     agents,
     claude,
+    codex,
+    antigravity,
+
+    /// Instruction file relative to the home directory.
+    fn relative(named: Named) []const u8 {
+        return switch (named) {
+            .agents => ".agents/AGENTS.md",
+            .claude => ".claude/CLAUDE.md",
+            .codex => ".codex/AGENTS.md",
+            .antigravity => ".gemini/GEMINI.md",
+        };
+    }
+};
+
+pub const Target = union(enum) {
+    named: Named,
+    /// Borrowed path to the instruction file, resolved relative to the working directory.
+    custom: []const u8,
 
     pub fn parse(args: []const [:0]const u8) ?Target {
-        if (args.len == 0) return .agents;
-        if (args.len != 1) return null;
-
-        return std.meta.stringToEnum(Target, args[0]);
-    }
-
-    pub fn filename(target: Target) []const u8 {
-        return switch (target) {
-            .agents => "AGENTS.md",
-            .claude => "CLAUDE.md",
+        return switch (args.len) {
+            0 => .{ .named = .agents },
+            1 => .{ .named = std.meta.stringToEnum(Named, args[0]) orelse return null },
+            2 => if (std.mem.eql(u8, args[0], "custom") and args[1].len > 0) .{ .custom = args[1] } else null,
+            else => null,
         };
     }
 
-    /// Directory under the home directory holding the instruction file.
-    fn folder(target: Target) []const u8 {
+    /// Returns the instruction file path; borrows the custom path and allocates named ones.
+    pub fn path(target: Target, arena: std.mem.Allocator, environ: *const std.process.Environ.Map) ![]const u8 {
         return switch (target) {
-            .agents => ".agents",
-            .claude => ".claude",
+            .named => |named| std.fs.path.join(arena, &.{ try dir.homePath(environ), named.relative() }),
+            .custom => |custom| custom,
         };
     }
 };
@@ -70,13 +84,9 @@ fn section(text: []const u8) !?Section {
 pub fn update(
     io: std.Io,
     arena: std.mem.Allocator,
-    environ: *const std.process.Environ.Map,
-    selected: Target,
+    path: []const u8,
     install: bool,
 ) !Result {
-    const home = try dir.homePath(environ);
-    const path = try std.fs.path.join(arena, &.{ home, selected.folder(), selected.filename() });
-
     const cwd = std.Io.Dir.cwd();
     const text = cwd.readFileAlloc(io, path, arena, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
         error.FileNotFound => if (install) "" else return .unchanged,
@@ -123,4 +133,40 @@ test "instruction markers delimit only fb content and reject malformed sections"
     for ([_][]const u8{ start, end, end ++ start, block ++ block, start ++ start ++ end }) |invalid| {
         try t.expectError(error.InvalidInstructionMarkers, section(invalid));
     }
+}
+
+test "target parsing accepts named targets and a custom path" {
+    const t = std.testing;
+    try t.expectEqual(Named.agents, Target.parse(&.{}).?.named);
+
+    inline for (.{ "agents", "claude", "codex", "antigravity" }) |name| {
+        try t.expectEqual(std.meta.stringToEnum(Named, name).?, Target.parse(&.{name}).?.named);
+    }
+
+    try t.expectEqualStrings("notes/RULES.md", Target.parse(&.{ "custom", "notes/RULES.md" }).?.custom);
+
+    try t.expectEqual(null, Target.parse(&.{"gemini"}));
+    try t.expectEqual(null, Target.parse(&.{"custom"}));
+    try t.expectEqual(null, Target.parse(&.{ "custom", "" }));
+    try t.expectEqual(null, Target.parse(&.{ "claude", "extra" }));
+    try t.expectEqual(null, Target.parse(&.{ "custom", "a", "b" }));
+}
+
+test "named targets resolve under the home directory" {
+    const t = std.testing;
+    var environ: std.process.Environ.Map = .init(t.allocator);
+    defer environ.deinit();
+
+    const key = if (builtin.os.tag == .windows) "USERPROFILE" else "HOME";
+    const home = if (builtin.os.tag == .windows) "C:\\Users\\me" else "/home/me";
+    try environ.put(key, home);
+
+    const expected = try std.fs.path.join(t.allocator, &.{ home, ".gemini", "GEMINI.md" });
+    defer t.allocator.free(expected);
+
+    const resolved = try (Target{ .named = .antigravity }).path(t.allocator, &environ);
+    defer t.allocator.free(resolved);
+    try t.expectEqualStrings(expected, resolved);
+
+    try t.expectEqualStrings("x/y.md", try (Target{ .custom = "x/y.md" }).path(t.allocator, &environ));
 }
