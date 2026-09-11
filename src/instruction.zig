@@ -39,6 +39,8 @@ const content =
     \\Add `-l <n>` to print the last n lines of each file inline, `-t <duration>` (30s, 5m) to
     \\kill a hanging command (exit 124), `-a` to print the paths before the command starts so
     \\the files can be followed while it runs, and `--json` for a machine-readable report.
+    \\A command whose stdout or stderr file exceeds 256M is killed (exit 153); pass `-u` when
+    \\huge output is expected and must not be interrupted.
     \\`fb last` and `fb print <id>` re-report a saved run without rerunning it; `-n <name>`
     \\gives a run a stable ID and path. Run `fb run --help`, `fb last --help`, or
     \\`fb print --help` for all options.

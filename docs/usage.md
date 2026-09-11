@@ -67,9 +67,10 @@ fb print --json 0123456789abcdef0123456789abcdef
 
 Each run writes only its ID to `file_bash/last` after successfully starting the
 shell. A failed start leaves the previous run ID unchanged. The run directory
-retains stdout, stderr, and a ten-byte `status` file containing the exit code,
-the timeout flag, and the duration in nanoseconds. `run`, `last`, and `print` build reports from these files and return the
-command's exit code. Overlapping runs select the most recently started run. If
+retains stdout, stderr, and an eleven-byte `status` file containing the exit
+code, the timeout flag, the oversized stream (0 for none, 1 for stdout, 2 for
+stderr), and the duration in nanoseconds. `run`, `last`, and `print` build
+reports from these files and return the command's exit code. Overlapping runs select the most recently started run. If
 no run is saved or its completion status is unavailable, `last` reports an
 error and returns 1.
 
@@ -103,9 +104,9 @@ fb run -o:l 5 -e:l=50 'make'
 `--json` prints one JSON object on completion instead of the text report. It
 cannot be combined with `--async`. Both streams contain `path` and `size` in
 bytes, plus `head` and/or `tail` when requested. The result includes `exit_code`,
-`timed_out`, and `duration_ns`, the command's run time in nanoseconds; `fb`
-still returns the command's exit code. Diagnostics go to
-stderr.
+`timed_out`, `oversized` (`"stdout"`, `"stderr"`, or `null`), and `duration_ns`,
+the command's run time in nanoseconds; `fb` still returns the command's exit
+code. Diagnostics go to stderr.
 
 ```sh
 fb run --json --head 3 'echo hello'
@@ -133,8 +134,19 @@ count means seconds. A timed command is killed with `SIGKILL` once the duration
 elapses, reports the timeout on stderr, and exits with 124, matching
 `timeout(1)`. Output written before the kill stays in the files. On Linux and
 macOS, the command leads its own process group and the whole group is killed.
-On Windows, only the shell process is terminated. Without `--timeout`, the
-command runs unbounded and keeps receiving the terminal's signals.
+On Windows, only the shell process is terminated. Without `--timeout` and with
+`--unlimited`, the command runs unbounded and keeps receiving the terminal's
+signals.
+
+A command whose `stdout` or `stderr` file exceeds the output size limit is
+killed the same way, reports the oversized stream on stderr and in the summary
+header (`oversized=stdout`), and exits with 153. The limit defaults to 256M per
+file; `FILE_BASH_MAX_SIZE` changes it and `--unlimited` (short `-u`) disables it
+for one run. See [Configuration](configuration.md#output-size-limit).
+
+```sh
+fb run -u 'tar cf - . | base64'
+```
 
 The runner returns the command's exit code, or 128 plus the signal capped at
 255 when terminated by a signal. Missing or invalid arguments return 2; runner

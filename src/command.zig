@@ -27,7 +27,7 @@ pub const Command = enum {
         return switch (command) {
             .run => true,
             .last, .print => switch (option) {
-                .async, .timeout, .name, .cwd => false,
+                .async, .timeout, .unlimited, .name, .cwd => false,
                 else => true,
             },
             .clean, .install, .uninstall => false,
@@ -77,6 +77,8 @@ pub const Run = struct {
     timeout: ?std.Io.Duration = null,
     /// Print the output paths before the command starts instead of after it exits.
     async: bool = false,
+    /// Never kill the command for oversized output.
+    unlimited: bool = false,
     /// Lines of the stdout file to print after the command exits.
     stdout: Excerpt = .{},
     /// Lines of the stderr file to print after the command exits.
@@ -162,6 +164,7 @@ pub const Run = struct {
         name,
         cwd,
         async,
+        unlimited,
         json,
         head,
         tail,
@@ -178,6 +181,8 @@ pub const Run = struct {
             .{ "--timeout", .timeout },
             .{ "-a", .async },
             .{ "--async", .async },
+            .{ "-u", .unlimited },
+            .{ "--unlimited", .unlimited },
             .{ "--json", .json },
             .{ "-h", .help },
             .{ "--help", .help },
@@ -197,7 +202,7 @@ pub const Run = struct {
 
         fn takesValue(option: Option) bool {
             return switch (option) {
-                .async, .help, .json => false,
+                .async, .unlimited, .help, .json => false,
                 else => true,
             };
         }
@@ -298,6 +303,7 @@ pub const Run = struct {
                 },
                 .timeout => run.timeout = try parseTimeout(value),
                 .async => run.async = true,
+                .unlimited => run.unlimited = true,
                 .json => run.style = .json,
                 inline .head, .tail, .out_head, .out_tail, .err_head, .err_tail => |selected| {
                     const lines = comptime selected.lines().?;
@@ -707,4 +713,16 @@ test "working directory arguments" {
     try t.expectError(error.MissingValue, Run.parse(.run, &.{"-C"}, .{}));
     try t.expectError(error.InvalidDirectory, Run.parse(.run, &.{ "-C=", "pwd" }, .{}));
     try t.expectError(error.UnknownFlag, Run.parse(.last, &.{ "-C", "relative" }, .{}));
+}
+
+test "unlimited output size flag" {
+    const t = std.testing;
+
+    try t.expectEqual(false, (try Run.parse(.run, &.{"true"}, .{})).unlimited);
+    inline for (.{ "-u", "--unlimited" }) |flag| {
+        try t.expectEqual(true, (try Run.parse(.run, &.{ flag, "true" }, .{})).unlimited);
+        try t.expectError(error.UnexpectedValue, Run.parse(.run, &.{ flag ++ "=1", "true" }, .{}));
+        try t.expectError(error.UnknownFlag, Run.parse(.last, &.{flag}, .{}));
+        try t.expectError(error.UnknownFlag, Run.parse(.print, &.{ flag, "build" }, .{}));
+    }
 }

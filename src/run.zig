@@ -6,6 +6,7 @@ const Child = @import("Child.zig");
 const Output = @import("Output.zig");
 const command = @import("command.zig");
 const last = @import("last.zig");
+const limit = @import("limit.zig");
 
 const usage =
     \\Usage: fb [run] [options] '<command>'
@@ -18,6 +19,8 @@ const usage =
     \\  -a, --async               print the output paths before the command starts
     \\  -C <dir>                  working directory (default: FILE_BASH_CWD or current directory)
     \\  -t, --timeout <duration>  kill the command after the duration (30s, 5m, 2h)
+    \\  -u, --unlimited           never kill the command for oversized output
+    \\                            (default limit per file: FILE_BASH_MAX_SIZE or 256M)
     \\  -d, --head <n>            print the first n lines of stdout and stderr afterwards
     \\  -l, --tail <n>            print the last n lines of stdout and stderr afterwards
     \\  -o:d, --out:head <n>      first n lines of stdout only
@@ -73,6 +76,15 @@ pub fn execute(
     }
     defer if (cwd) |opened| opened.close(io);
 
+    // Resolved before any file is touched so an invalid limit never overwrites a named run.
+    const max_size: ?u64 = if (parsed.unlimited) null else limit.maxSize(environ) catch {
+        try stderr.print(
+            "invalid {s} '{s}'; use a positive integer with an optional K, M, or G suffix (for example, 256M)\n",
+            .{ limit.key, environ.get(limit.key).? },
+        );
+        return 1;
+    };
+
     // Keep each run's files together and leave them available after exit.
     var random_name: [32]u8 = undefined;
     const name = parsed.name orelse name: {
@@ -122,6 +134,7 @@ pub fn execute(
         .stdout = stdout_file,
         .stderr = stderr_file,
         .timeout = parsed.timeout,
+        .max_size = max_size,
     });
 
     last.remember(io, parent_dir, name) catch |err| {
@@ -134,10 +147,16 @@ pub fn execute(
     if (status.timed_out) {
         try stderr.print("command timed out after {f} and was killed\n", .{parsed.timeout.?});
     }
+    if (status.oversized) |stream| {
+        try stderr.print("{s} exceeded the ", .{@tagName(stream)});
+        try Output.writeSize(max_size.?, stderr);
+        try stderr.print(" size limit and the command was killed; raise {s} or pass --unlimited\n", .{limit.key});
+    }
 
     try (Output.Status{
         .exit_code = status.code,
         .timed_out = status.timed_out,
+        .oversized = status.oversized,
         .duration = status.duration,
     }).save(io, output_dir);
     const output = try Output.read(io, output_dir, output_path, parsed.stdout, parsed.stderr);
@@ -150,4 +169,5 @@ test {
     _ = Child;
     _ = dir;
     _ = shell;
+    _ = limit;
 }

@@ -32,6 +32,31 @@ An unset or empty value uses the platform default. An unknown value is an error.
 `cmd` and `powershell` are available only on Windows; `pwsh` is cross-platform.
 The selected shell must be available on `PATH`.
 
+## Output size limit
+
+`run` measures the `stdout` and `stderr` files every 20 ms while the command
+runs. If either file exceeds the limit, the command is killed with `SIGKILL`,
+the run reports which stream grew too large, and `fb` exits with 153, matching
+a shell's report of `SIGXFSZ`. This stops a looping command from filling the
+disk before a timeout fires. Output written before the kill stays in the files.
+
+The default limit is 256M per file. Set `FILE_BASH_MAX_SIZE` to change it:
+
+```sh
+FILE_BASH_MAX_SIZE=1G fb 'zig build test'
+FILE_BASH_MAX_SIZE=4096 fb 'make'
+```
+
+The value is a positive integer with an optional `K`, `M`, or `G` suffix
+(powers of 1024); a bare integer means bytes. An unset or empty value uses the
+default; any other invalid value is an error and the command does not run.
+
+Pass `--unlimited` (short form `-u`) to disable the limit for one run, for
+example when a command is expected to produce huge output and must not be
+interrupted. On Linux and macOS a limited run leads its own process group like a
+timed run does, so the kill reaches the whole command tree; `--unlimited`
+without `--timeout` keeps the command in `fb`'s process group.
+
 ## Temporary directory
 
 Linux and macOS use `TMPDIR`, falling back to `/tmp`. Windows checks `TMP`, then

@@ -1,10 +1,16 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const Output = @import("Output.zig");
 
 const Child = @This();
 
 process: std.process.Child,
 timeout: ?std.Io.Duration,
+max_size: ?u64,
+/// Borrowed file receiving the command's stdout; measured while the command runs.
+stdout: std.Io.File,
+/// Borrowed file receiving the command's stderr; measured while the command runs.
+stderr: std.Io.File,
 /// Monotonic time taken right after the process started.
 started: std.Io.Timestamp,
 
@@ -18,12 +24,15 @@ pub const Options = struct {
     stderr: std.Io.File,
     /// Kills the command once the duration elapses; unbounded when null.
     timeout: ?std.Io.Duration,
+    /// Kills the command once either output file exceeds this many bytes; unbounded when null.
+    max_size: ?u64,
 };
 
 /// Spawns the command with its output streams redirected to the given files.
 /// The child environment is allocated in `arena`.
 pub fn spawn(io: std.Io, arena: std.mem.Allocator, options: Options) !Child {
     var environ = try nonInteractive(arena, options.environ);
+    const bounded = options.timeout != null or options.max_size != null;
     const process = try std.process.spawn(io, .{
         .argv = options.argv,
         .cwd = if (options.cwd) |cwd| .{ .dir = cwd } else .inherit,
@@ -31,15 +40,18 @@ pub fn spawn(io: std.Io, arena: std.mem.Allocator, options: Options) !Child {
         .stdout = .{ .file = options.stdout },
         .stderr = .{ .file = options.stderr },
         .stdin = .close,
-        // A timed run leads its own process group so a timeout can kill
-        // the whole command tree; without one, signals keep reaching the
+        // A bounded run leads its own process group so a kill reaches the
+        // whole command tree; without a bound, signals keep reaching the
         // child.
-        .pgid = if (builtin.os.tag == .windows or options.timeout == null) null else 0,
+        .pgid = if (builtin.os.tag == .windows or !bounded) null else 0,
     });
 
     return .{
         .process = process,
         .timeout = options.timeout,
+        .max_size = options.max_size,
+        .stdout = options.stdout,
+        .stderr = options.stderr,
         .started = clock.now(io),
     };
 }
@@ -47,14 +59,24 @@ pub fn spawn(io: std.Io, arena: std.mem.Allocator, options: Options) !Child {
 /// Measures how long the command ran; unaffected by wall-clock adjustments.
 const clock: std.Io.Clock = .awake;
 
+/// How often the output files are measured against the size limit.
+const poll_interval: std.Io.Duration = .fromMilliseconds(20);
+
 pub const Status = struct {
     code: u8,
-    timed_out: bool,
+    timed_out: bool = false,
+    /// The stream whose file outgrew the size limit, when the command was killed for it.
+    oversized: ?Output.StreamType = null,
     /// Time from spawn until the child was reaped.
     duration: std.Io.Duration = .zero,
 
-    /// Matches the exit code `timeout(1)` reports for an expired command.
-    pub const timeout_code: u8 = 124;
+    /// Exit codes reported when fb kills the command.
+    pub const KillCode = enum(u8) {
+        /// Matches the exit code `timeout(1)` reports for an expired command.
+        timeout = 124,
+        /// Matches the code a shell reports for `SIGXFSZ`, the file size limit signal.
+        oversized = 153,
+    };
 
     fn fromTerm(term: std.process.Child.Term) Status {
         return .{
@@ -63,16 +85,29 @@ pub const Status = struct {
                 .signal, .stopped => |signal| @intCast(@min(255, 128 + @as(u32, @intFromEnum(signal)))),
                 .unknown => 1,
             },
-            .timed_out = false,
+        };
+    }
+
+    fn fromKill(kill: Kill) Status {
+        return switch (kill) {
+            .timeout => .{ .code = @intFromEnum(KillCode.timeout), .timed_out = true },
+            .oversized => |stream| .{ .code = @intFromEnum(KillCode.oversized), .oversized = stream },
         };
     }
 };
 
-/// Waits for the command, terminating it when its timeout elapses first. The
-/// child is reaped in either case. Call once per spawned child.
+/// Why fb terminated the command before it exited on its own.
+const Kill = union(enum) {
+    timeout,
+    oversized: Output.StreamType,
+};
+
+/// Waits for the command, terminating it when its timeout elapses or an output
+/// file outgrows the size limit first. The child is reaped in either case.
+/// Call once per spawned child.
 pub fn wait(child: *Child, io: std.Io) !Status {
-    var status: Status = if (child.timeout) |timeout|
-        try child.waitTimeout(io, timeout)
+    var status: Status = if (child.timeout != null or child.max_size != null)
+        try child.waitBounded(io)
     else
         .fromTerm(try child.process.wait(io));
     status.duration = child.started.durationTo(clock.now(io));
@@ -85,6 +120,7 @@ const Waited = std.process.Child.WaitError!std.process.Child.Term;
 const Event = union(enum) {
     finished: Waited,
     expired: std.Io.Cancelable!void,
+    oversized: std.Io.File.StatError!?Output.StreamType,
 };
 
 fn waitProcess(io: std.Io, process: *std.process.Child) Waited {
@@ -95,33 +131,59 @@ fn expire(io: std.Io, timeout: std.Io.Duration) std.Io.Cancelable!void {
     return io.sleep(timeout, .awake);
 }
 
-fn waitTimeout(child: *Child, io: std.Io, timeout: std.Io.Duration) !Status {
+/// Polls both files until one exceeds `max_size` and names it. Cancellation
+/// ends here with null; it only happens once the select no longer awaits.
+fn watchSize(
+    io: std.Io,
+    stdout: std.Io.File,
+    stderr: std.Io.File,
+    max_size: u64,
+) std.Io.File.StatError!?Output.StreamType {
+    const files = [_]std.Io.File{ stdout, stderr };
+    const names = [_]Output.StreamType{ .stdout, .stderr };
+
+    while (true) {
+        io.sleep(poll_interval, .awake) catch return null;
+        for (files, names) |file, name| {
+            if ((try file.stat(io)).size > max_size) return name;
+        }
+    }
+}
+
+fn waitBounded(child: *Child, io: std.Io) !Status {
     // The identifier is still set because the child was spawned and has not
     // been waited on yet. Terminating uses it directly because only the
     // pending wait may reap the child.
     const id = child.process.id.?;
 
-    var events: [2]Event = undefined;
+    var events: [3]Event = undefined;
     var select: std.Io.Select(Event) = .init(io, &events);
     defer select.cancelDiscard();
 
     try select.concurrent(.finished, waitProcess, .{ io, &child.process });
-    select.async(.expired, expire, .{ io, timeout });
+    if (child.timeout) |timeout| select.async(.expired, expire, .{ io, timeout });
+    if (child.max_size) |max_size| {
+        try select.concurrent(.oversized, watchSize, .{ io, child.stdout, child.stderr, max_size });
+    }
 
-    switch (try select.await()) {
-        .finished => |result| return .fromTerm(try result),
-        .expired => |result| {
-            try result;
+    // Both bounds may fire before the reap completes; only the first one kills.
+    var kill: ?Kill = null;
+    while (true) {
+        const reason: Kill = switch (try select.await()) {
+            .finished => |result| {
+                const status: Status = .fromTerm(try result);
+                return if (kill) |first| .fromKill(first) else status;
+            },
+            .expired => |result| expired: {
+                try result;
+                break :expired .timeout;
+            },
+            .oversized => |result| .{ .oversized = (try result) orelse continue },
+        };
+        if (kill == null) {
+            kill = reason;
             try terminate(id);
-
-            return switch (try select.await()) {
-                .finished => |result_after_kill| {
-                    _ = try result_after_kill;
-                    return .{ .code = Status.timeout_code, .timed_out = true };
-                },
-                .expired => unreachable,
-            };
-        },
+        }
     }
 }
 

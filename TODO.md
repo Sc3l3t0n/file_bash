@@ -30,8 +30,8 @@ Ideas gathered from using `fb` as an agent, ordered by expected impact.
 
 - [x] `--stdin=null` (or close stdin by default): a command waiting on stdin hangs
       an agent silently.
-- [ ] Per-file size cap with a truncation notice, so a looping process cannot fill
-      the disk before the timeout fires.
+- [x] Per-file size cap (`FILE_BASH_MAX_SIZE`, `--unlimited` to opt out) that kills
+      the command, so a looping process cannot fill the disk before the timeout fires.
 - [x] `-C <dir>`: set the working directory instead of `cd` in the command.
 
 ## Optional

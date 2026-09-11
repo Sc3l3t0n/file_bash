@@ -9,12 +9,17 @@ pub const Style = enum { text, json };
 /// Output file names; each matches the `Output` field describing it.
 pub const stream_names = [_][]const u8{ "stdout", "stderr" };
 
+/// Identifies one of the output files; the saved status stores it as the tag plus one.
+pub const StreamType = enum(u8) { stdout, stderr };
+
 /// Absolute run directory path, without a trailing separator.
 path: []const u8,
 stdout: Stream,
 stderr: Stream,
 exit_code: u8,
 timed_out: bool = false,
+/// The file whose size limit killed the command, if any.
+oversized: ?StreamType = null,
 /// Time from spawn until the command was reaped.
 duration: std.Io.Duration = .zero,
 
@@ -23,15 +28,17 @@ pub const Stream = struct {
     lines: excerpt.Excerpt = .{},
 };
 
-/// Saved as the exit code, the timeout flag, and the duration in nanoseconds
-/// as a little-endian `u64`.
+/// Saved as the exit code, the timeout flag, the oversized stream (zero for
+/// none), and the duration in nanoseconds as a little-endian `u64`.
 pub const Status = struct {
     exit_code: u8,
     timed_out: bool,
+    oversized: ?StreamType = null,
     duration: std.Io.Duration = .zero,
 
     const filename = "status";
-    const size = 2 + @sizeOf(u64);
+    const size = 3 + @sizeOf(u64);
+    const stream_count = @typeInfo(StreamType).@"enum".fields.len;
 
     pub fn read(io: std.Io, directory: std.Io.Dir) !Status {
         const file = try directory.openFile(io, filename, .{});
@@ -39,12 +46,13 @@ pub const Status = struct {
 
         var bytes: [size + 1]u8 = undefined;
         const length = try file.readPositionalAll(io, &bytes, 0);
-        if (length != size or bytes[1] > 1) return error.InvalidRunStatus;
+        if (length != size or bytes[1] > 1 or bytes[2] > stream_count) return error.InvalidRunStatus;
 
         return .{
             .exit_code = bytes[0],
             .timed_out = bytes[1] == 1,
-            .duration = .fromNanoseconds(std.mem.readInt(u64, bytes[2..size], .little)),
+            .oversized = if (bytes[2] == 0) null else @enumFromInt(bytes[2] - 1),
+            .duration = .fromNanoseconds(std.mem.readInt(u64, bytes[3..size], .little)),
         };
     }
 
@@ -55,9 +63,10 @@ pub const Status = struct {
         var bytes: [size]u8 = undefined;
         bytes[0] = status.exit_code;
         bytes[1] = @intFromBool(status.timed_out);
+        bytes[2] = if (status.oversized) |stream| @intFromEnum(stream) + 1 else 0;
         // A negative duration cannot occur with a monotonic clock; clamp defensively.
         const nanoseconds: u64 = @intCast(std.math.clamp(status.duration.toNanoseconds(), 0, std.math.maxInt(u64)));
-        std.mem.writeInt(u64, bytes[2..size], nanoseconds, .little);
+        std.mem.writeInt(u64, bytes[3..size], nanoseconds, .little);
         try file.file.writeStreamingAll(io, &bytes);
         try file.replace(io);
     }
@@ -84,6 +93,7 @@ pub fn read(
         .stderr = .{ .lines = stderr_lines },
         .exit_code = status.exit_code,
         .timed_out = status.timed_out,
+        .oversized = status.oversized,
         .duration = status.duration,
     };
 
@@ -127,6 +137,7 @@ pub fn writeReport(output: Output, io: std.Io, directory: std.Io.Dir, style: Sty
 fn writeText(output: Output, io: std.Io, directory: std.Io.Dir, out: *std.Io.Writer) !void {
     try out.print("[fb exit={d}", .{output.exit_code});
     if (output.timed_out) try out.writeAll(" timed_out");
+    if (output.oversized) |stream| try out.print(" oversized={s}", .{@tagName(stream)});
     if (output.duration.toNanoseconds() > 0) try out.print(" time={f}", .{output.duration});
     try out.writeAll("]\n");
 
@@ -190,6 +201,8 @@ fn writeJson(output: Output, io: std.Io, directory: std.Io.Dir, out: *std.Io.Wri
     try json.write(output.exit_code);
     try json.objectField("timed_out");
     try json.write(output.timed_out);
+    try json.objectField("oversized");
+    try json.write(if (output.oversized) |stream| @tagName(stream) else null);
     try json.objectField("duration_ns");
     try json.write(output.duration.toNanoseconds());
     try json.endObject();
@@ -295,4 +308,53 @@ test "writeText with timeout" {
 test {
     _ = excerpt;
     _ = JsonString;
+}
+
+test "writeText with oversized output" {
+    const t = std.testing;
+    const io = t.io;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "stdout", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "stderr", .data = "" });
+
+    const output: Output = .{
+        .path = "/test/run",
+        .stdout = .{ .size = 268435457 },
+        .stderr = .{ .size = 0 },
+        .exit_code = 153,
+        .oversized = .stdout,
+        .duration = .fromNanoseconds(2 * std.time.ns_per_s),
+    };
+
+    var out: std.Io.Writer.Allocating = .init(t.allocator);
+    defer out.deinit();
+    try output.writeText(io, tmp.dir, &out.writer);
+
+    var expected_buf: [256]u8 = undefined;
+    const expected = try std.fmt.bufPrint(&expected_buf,
+        \\[fb exit=153 oversized=stdout time=2s]
+        \\stdout (256.0 MB): /test/run{c}stdout
+        \\stderr (0 B): /test/run{c}stderr
+        \\
+    , .{ std.fs.path.sep, std.fs.path.sep });
+    try t.expectEqualStrings(expected, out.written());
+}
+
+test "status round-trips the oversized stream" {
+    const t = std.testing;
+    const io = t.io;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const cases = [_]?StreamType{ null, .stdout, .stderr };
+    for (cases) |oversized| {
+        const saved: Status = .{ .exit_code = 153, .timed_out = false, .oversized = oversized };
+        try saved.save(io, tmp.dir);
+        try t.expectEqual(saved, try Status.read(io, tmp.dir));
+    }
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "status", .data = &([_]u8{ 0, 0, 3 } ++ [_]u8{0} ** 8) });
+    try t.expectError(error.InvalidRunStatus, Status.read(io, tmp.dir));
 }
