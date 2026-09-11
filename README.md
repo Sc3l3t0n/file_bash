@@ -46,6 +46,19 @@ Output goes directly to
 the files while the command runs. Files remain after exit until you remove them
 or the system cleans its temporary directory.
 
+Use `--name <name>` (or `-n`, also `--name=<name>`) to choose a stable run
+directory such as `/tmp/file_bash/build/`:
+
+```sh
+fb run --name build 'zig build'
+```
+
+Names contain 1–64 ASCII letters, digits, hyphens, or underscores. `last` is
+reserved case-insensitively. Windows binaries also reserve device names. Reusing a name
+overwrites its stdout, stderr, and completion status. Wait for a named run to
+finish before reusing its name. Unnamed runs keep
+using random IDs. `fb last` and `fb clean` also work with named runs.
+
 Run `fb last` to report the latest run's output again without rerunning the command.
 `fb last --help` explains this behavior and where the run ID is stored.
 It accepts `--json` and

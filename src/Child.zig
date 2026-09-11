@@ -31,7 +31,7 @@ pub fn spawn(io: std.Io, arena: std.mem.Allocator, options: Options) !Child {
             // A timed run leads its own process group so a timeout can kill
             // the whole command tree; without one, signals keep reaching the
             // child.
-            .pgid = if (options.timeout == null) null else 0,
+            .pgid = if (builtin.os.tag == .windows or options.timeout == null) null else 0,
         }),
         .timeout = options.timeout,
     };

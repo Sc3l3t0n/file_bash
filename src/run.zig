@@ -14,6 +14,7 @@ const usage =
     \\Save stdout and stderr to files; report paths, sizes, and exit code on completion.
     \\
     \\Options:
+    \\  -n, --name <name>        save under this name, overwriting previous output
     \\  --json                   print results as JSON (cannot be used with --async)
     \\  -a, --async               print the output paths before the command starts
     \\  -t, --timeout <duration>  kill the command after the duration (30s, 5m, 2h)
@@ -61,8 +62,13 @@ pub fn execute(
     }
 
     // Keep each run's files together and leave them available after exit.
-    var random: [16]u8 = undefined;
-    io.random(&random);
+    var random_name: [32]u8 = undefined;
+    const name = if (parsed.name) |name| name else name: {
+        var random: [16]u8 = undefined;
+        io.random(&random);
+        random_name = std.fmt.bytesToHex(random, .lower);
+        break :name &random_name;
+    };
 
     const temp_path = try dir.tempPath(environ);
     const permissions: std.Io.File.Permissions = if (builtin.os.tag == .windows) .default_dir else .fromMode(0o700);
@@ -74,20 +80,25 @@ pub fn execute(
     var parent_dir = try temp_dir.createDirPathOpen(io, dir.output_dirname, .{ .permissions = permissions });
     defer parent_dir.close(io);
 
-    const name = std.fmt.bytesToHex(random, .lower);
-    // NOTE: not createDirPathOpen; an existing dir must fail (future named paths).
-    try parent_dir.createDir(io, &name, permissions);
-    var output_dir = try parent_dir.openDir(io, &name, .{});
+    parent_dir.createDir(io, name, permissions) catch |err| switch (err) {
+        error.PathAlreadyExists => if (parsed.name == null) return err,
+        else => return err,
+    };
+    var output_dir = try parent_dir.openDir(io, name, .{ .follow_symlinks = false });
     defer output_dir.close(io);
 
-    const stdout_file = try output_dir.createFile(io, Output.stdout_filename, .{ .exclusive = true });
+    // Clear the previous completion status before starting another run.
+    const status_file = try output_dir.createFile(io, "status", .{});
+    status_file.close(io);
+
+    const stdout_file = try output_dir.createFile(io, Output.stdout_filename, .{});
     defer stdout_file.close(io);
-    const stderr_file = try output_dir.createFile(io, Output.stderr_filename, .{ .exclusive = true });
+    const stderr_file = try output_dir.createFile(io, Output.stderr_filename, .{});
     defer stderr_file.close(io);
 
     // With --async the paths are reported before spawning so a caller can follow
     // the output while the command is still running.
-    const output_path = try std.fs.path.join(arena, &.{ temp_path, dir.output_dirname, &name });
+    const output_path = try std.fs.path.join(arena, &.{ temp_path, dir.output_dirname, name });
     const output_stdout: Output.Stream = .{
         .path = output_path,
         .filename = Output.stdout_filename,
@@ -113,7 +124,7 @@ pub fn execute(
         .timeout = parsed.timeout,
     });
 
-    last.remember(io, parent_dir, &name) catch |err| {
+    last.remember(io, parent_dir, name) catch |err| {
         // The shell has started; reap it even if saving the pointer fails.
         _ = child.wait(io) catch {};
         return err;

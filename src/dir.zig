@@ -1,6 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+pub const last_filename = "last";
+
 pub const output_dirname = "file_bash";
 
 /// Returns a borrowed absolute path; does not allocate or create the directory.
@@ -92,4 +94,21 @@ test "home directory must be present and absolute" {
     const path = if (builtin.os.tag == .windows) "C:\\Users\\test" else "/home/test";
     try environ.put(key, path);
     try std.testing.expectEqualStrings(path, try homePath(&environ));
+}
+
+/// Portable single-component run names, excluding internal and Windows device names.
+pub fn validRunName(name: []const u8) bool {
+    if (name.len == 0 or name.len > 64) return false;
+    for (name) |byte| {
+        if (!std.ascii.isAlphanumeric(byte) and byte != '-' and byte != '_') return false;
+    }
+    if (std.ascii.eqlIgnoreCase(name, last_filename)) return false;
+
+    if (builtin.os.tag == .windows) {
+        inline for (.{ "CON", "PRN", "AUX", "NUL", "CONIN", "CONOUT" }) |reserved| {
+            if (std.ascii.eqlIgnoreCase(name, reserved)) return false;
+        }
+        if (name.len == 4 and (std.ascii.eqlIgnoreCase(name[0..3], "COM") or std.ascii.eqlIgnoreCase(name[0..3], "LPT")) and name[3] >= '1' and name[3] <= '9') return false;
+    }
+    return true;
 }

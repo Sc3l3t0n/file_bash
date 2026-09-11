@@ -23,7 +23,7 @@ const usage =
 ;
 
 pub fn remember(io: std.Io, parent: std.Io.Dir, id: []const u8) !void {
-    var atomic_file = try parent.createFileAtomic(io, "last", .{ .replace = true });
+    var atomic_file = try parent.createFileAtomic(io, dir.last_filename, .{ .replace = true });
     defer atomic_file.deinit(io);
     try atomic_file.file.writeStreamingAll(io, id);
     try atomic_file.replace(io);
@@ -56,14 +56,11 @@ pub fn execute(
         else => return err,
     };
     defer parent.close(io);
-    const id = parent.readFileAlloc(io, "last", arena, .limited(33)) catch |err| switch (err) {
+    const id = parent.readFileAlloc(io, dir.last_filename, arena, .limited(64)) catch |err| switch (err) {
         error.FileNotFound => return missing(stderr),
         else => return err,
     };
-    if (id.len != 32) return error.InvalidLastRunId;
-    for (id) |byte| {
-        if (!std.ascii.isDigit(byte) and (byte < 'a' or byte > 'f')) return error.InvalidLastRunId;
-    }
+    if (!dir.validRunName(id)) return error.InvalidLastRunId;
     var directory = parent.openDir(io, id, .{}) catch |err| switch (err) {
         error.FileNotFound => return unavailable(stderr),
         else => return err,
@@ -128,7 +125,7 @@ test "last reads output with new excerpt options and clean removes the last poin
         .timed_out = true,
     };
     try remember(io, parent, id);
-    try t.expectEqualStrings(id, try parent.readFileAlloc(io, "last", arena, .limited(33)));
+    try t.expectEqualStrings(id, try parent.readFileAlloc(io, dir.last_filename, arena, .limited(33)));
     try t.expectEqual(1, try execute(io, arena, &.{}, &environ, &out.writer, &err.writer));
     try (Output.Status{ .exit_code = output.exit_code, .timed_out = output.timed_out }).save(io, directory);
     inline for (.{ Output.Style.text, Output.Style.json }) |style| {
@@ -149,6 +146,6 @@ test "last reads output with new excerpt options and clean removes the last poin
     try t.expectEqualStrings("second\nthird\n", stream.get("tail").?.string);
     try t.expect(stream.get("head") == null);
     try t.expectEqual(0, try clean.execute(io, &.{}, &environ, &out.writer, &err.writer));
-    try t.expectError(error.FileNotFound, parent.openFile(io, "last", .{}));
+    try t.expectError(error.FileNotFound, parent.openFile(io, dir.last_filename, .{}));
     try t.expectEqual(1, try execute(io, arena, &.{}, &environ, &out.writer, &err.writer));
 }

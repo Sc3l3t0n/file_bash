@@ -1,4 +1,6 @@
+const builtin = @import("builtin");
 const std = @import("std");
+const dir = @import("dir.zig");
 const excerpt = @import("excerpt.zig");
 const Output = @import("Output.zig");
 const Excerpt = excerpt.Excerpt;
@@ -18,6 +20,17 @@ pub const Command = enum {
         .{ "init", .install },
         .{ "uninstall", .uninstall },
     });
+
+    fn acceptsOption(command: Command, option: Run.Option) bool {
+        return switch (command) {
+            .run => true,
+            .last => switch (option) {
+                .async, .timeout, .name => false,
+                else => true,
+            },
+            .clean, .install, .uninstall => false,
+        };
+    }
 };
 
 pub const BaseOption = enum {
@@ -56,6 +69,8 @@ pub const Run = struct {
     help: bool = false,
     style: Output.Style = .text,
     source: []const u8,
+    /// Borrowed output directory name; null generates a random name. Reuse overwrites saved output.
+    name: ?[]const u8 = null,
     timeout: ?std.Io.Duration,
     /// Print the output paths before the command starts instead of after it exits.
     async: bool,
@@ -69,6 +84,7 @@ pub const Run = struct {
         MissingCommand,
         MissingValue,
         InvalidTimeout,
+        InvalidName,
         InvalidLineCount,
         ConflictingHeadFlags,
         ConflictingTailFlags,
@@ -89,6 +105,10 @@ pub const Run = struct {
                 error.ConflictingOutputFlags => try out.writeAll("--async and --json cannot be used together"),
                 error.MissingCommand => try out.writeAll("missing command; pass one quoted shell command after the options"),
                 error.MissingValue => try out.print("option '{s}' requires a value", .{diagnostic.argument}),
+                error.InvalidName => {
+                    try out.print("invalid run name '{s}'; use 1–64 ASCII letters, digits, hyphens, or underscores; last is reserved", .{diagnostic.value});
+                    if (builtin.os.tag == .windows) try out.writeAll("; Windows device names are also reserved");
+                },
                 error.InvalidTimeout => try out.print("invalid timeout '{s}' for '{s}'; use a positive integer with ms, s, m, or h (for example, 30s); bare integers mean seconds; maximum count is 4294967295", .{ diagnostic.value, diagnostic.argument }),
                 error.InvalidLineCount => try out.print("invalid line count '{s}' for '{s}'; expected an integer from 1 to 4294967295", .{ diagnostic.value, diagnostic.argument }),
                 error.ConflictingHeadFlags, error.ConflictingTailFlags => {
@@ -106,6 +126,7 @@ pub const Run = struct {
     const Option = enum {
         help,
         timeout,
+        name,
         async,
         json,
         head,
@@ -116,6 +137,8 @@ pub const Run = struct {
         err_tail,
 
         const names = std.StaticStringMap(Option).initComptime(.{
+            .{ "--name", .name },
+            .{ "-n", .name },
             .{ "-t", .timeout },
             .{ "--timeout", .timeout },
             .{ "-a", .async },
@@ -176,7 +199,7 @@ pub const Run = struct {
             if (opts.diagnostic) |diagnostic| diagnostic.* = .{ .argument = name, .command = selected_command };
             const option = Option.names.get(name) orelse return error.UnknownFlag;
 
-            if (selected_command == .last and (option == .async or option == .timeout)) return error.UnknownFlag;
+            if (!selected_command.acceptsOption(option)) return error.UnknownFlag;
 
             // The value follows `=` or is the next argument.
             var value: []const u8 = "";
@@ -200,6 +223,10 @@ pub const Run = struct {
                 .help => {
                     run.help = true;
                     return run;
+                },
+                .name => {
+                    if (!dir.validRunName(value)) return error.InvalidName;
+                    run.name = value;
                 },
                 .timeout => run.timeout = try parseTimeout(value),
                 .async => run.async = true,
@@ -581,4 +608,25 @@ test "last accepts reporting options without shell source" {
     try t.expectError(error.InvalidLineCount, Run.parseLast(&.{"--tail=0"}, .{}));
     try t.expectError(error.ConflictingHeadFlags, Run.parseLast(&.{ "--head=1", "--out:head=2" }, .{}));
     try t.expectError(error.ConflictingTailFlags, Run.parseLast(&.{ "--err:tail=1", "--tail=2" }, .{}));
+}
+
+test "named runs accept portable names and reject paths and reserved names" {
+    const t = std.testing;
+    inline for (.{ "--name", "-n" }) |flag| {
+        try t.expectEqualStrings("build_1-debug", (try Run.parse(&.{ flag, "build_1-debug", "true" }, .{})).name.?);
+        try t.expectEqualStrings("build", (try Run.parse(&.{ flag ++ "=build", "true" }, .{})).name.?);
+        try t.expectError(error.MissingValue, Run.parse(&.{flag}, .{}));
+        try t.expectError(error.UnknownFlag, Run.parseLast(&.{ flag, "build" }, .{}));
+    }
+    inline for (.{ "", ".", "..", "../build", "a/b", "a\\b", "C:build", "last", "LAST", "build.", "two words", "x" ** 65 }) |name| {
+        try t.expectError(error.InvalidName, Run.parse(&.{ "--name", name, "true" }, .{}));
+    }
+    inline for (.{ "CON", "NUL", "com1", "LPT9" }) |name| {
+        if (builtin.os.tag == .windows) {
+            try t.expectError(error.InvalidName, Run.parse(&.{ "--name", name, "true" }, .{}));
+        } else {
+            try t.expectEqualStrings(name, (try Run.parse(&.{ "--name", name, "true" }, .{})).name.?);
+        }
+    }
+    try t.expectEqual(null, (try Run.parse(&.{"true"}, .{})).name);
 }
