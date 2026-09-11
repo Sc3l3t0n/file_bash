@@ -11,7 +11,7 @@ const usage =
     \\Print a saved run's output again without running the command again.
     \\
     \\Options:
-    \\  --json                   print results as JSON
+    \\  --json                    print results as JSON
     \\  -d, --head <n>            first n lines of stdout and stderr
     \\  -l, --tail <n>            last n lines of stdout and stderr
     \\  -o:h, --out:head <n>      first n lines of stdout only
@@ -31,7 +31,7 @@ pub fn execute(
     stderr: *std.Io.Writer,
 ) !u8 {
     var diagnostic: command.Run.Diagnostic = .{};
-    const parsed = command.Run.parsePrint(args, .{ .diagnostic = &diagnostic }) catch |err| {
+    const parsed = command.Run.parse(.print, args, .{ .diagnostic = &diagnostic }) catch |err| {
         try diagnostic.write(err, stderr);
         try stderr.writeAll(usage);
         return 2;
@@ -41,21 +41,11 @@ pub fn execute(
         return 0;
     }
 
-    const temp_path = try dir.tempPath(environ);
-    var temp = try std.Io.Dir.openDirAbsolute(io, temp_path, .{});
-    defer temp.close(io);
-    var parent = temp.openDir(io, dir.output_dirname, .{}) catch |err| switch (err) {
-        error.FileNotFound => return noRun(parsed.name.?, stderr),
-        else => return err,
-    };
-    defer parent.close(io);
+    const id = parsed.name.?;
+    const outputs = try dir.openOutputs(io, environ) orelse return report.missing(.named, id, stderr);
+    defer outputs.parent.close(io);
 
-    return report.report(io, arena, parent, temp_path, .{ .named = parsed.name.? }, parsed.style, parsed.stdout, parsed.stderr, stdout, stderr);
-}
-
-fn noRun(id: []const u8, stderr: *std.Io.Writer) !u8 {
-    try stderr.print("no run named '{s}'\n", .{id});
-    return 1;
+    return report.write(io, arena, outputs, id, .named, parsed, stdout, stderr);
 }
 
 test "print reports an explicit saved ID without changing last" {
@@ -68,7 +58,7 @@ test "print reports an explicit saved ID without changing last" {
     const arena = arena_state.allocator();
     var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
     const path = path_buffer[0..try tmp.dir.realPath(io, &path_buffer)];
-    var environ = std.process.Environ.Map.init(arena);
+    var environ: std.process.Environ.Map = .init(arena);
     try environ.put("TMPDIR", path);
     try environ.put("TMP", path);
 
@@ -91,7 +81,8 @@ test "print reports an explicit saved ID without changing last" {
 
     var out: std.Io.Writer.Allocating = .init(arena);
     var err: std.Io.Writer.Allocating = .init(arena);
-    try t.expectEqual(7, try execute(io, arena, &.{ "--json", "--out:tail=2", selected_id }, &environ, &out.writer, &err.writer));
+    const args: []const [:0]const u8 = &.{ "--json", "--out:tail=2", selected_id };
+    try t.expectEqual(7, try execute(io, arena, args, &environ, &out.writer, &err.writer));
     const json = try std.json.parseFromSliceLeaky(std.json.Value, arena, out.written(), .{});
     try t.expectEqual(7, json.object.get("exit_code").?.integer);
     try t.expectEqualStrings("second\nthird\n", json.object.get("stdout").?.object.get("tail").?.string);
@@ -111,5 +102,8 @@ test "print reports an explicit saved ID without changing last" {
     var unavailable_err: std.Io.Writer.Allocating = .init(arena);
     try t.expectEqual(1, try execute(io, arena, &.{"incomplete"}, &environ, &unavailable_out.writer, &unavailable_err.writer));
     try t.expectEqualStrings("", unavailable_out.written());
-    try t.expectEqualStrings("saved run 'incomplete' output or completion status is unavailable\n", unavailable_err.written());
+    try t.expectEqualStrings(
+        "saved run 'incomplete' output or completion status is unavailable\n",
+        unavailable_err.written(),
+    );
 }

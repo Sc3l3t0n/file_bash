@@ -79,6 +79,7 @@ fn flushPendingEscaped(escaped: *JsonString) !void {
 }
 
 test "escaping is independent of chunk boundaries" {
+    const t = std.testing;
     const input = "a\"\\\n\x00é€😀\xff\xe2x\xed\xa0\x80\xf0";
     const expected = "\"a\\\"\\\\\\n\\u0000é€😀\\u00ff\\u00e2x\\u00ed\\u00a0\\u0080\\u00f0\"";
     for (0..input.len + 1) |split| {
@@ -88,6 +89,6 @@ test "escaping is independent of chunk boundaries" {
         try escaped.writer.writeAll(input[0..split]);
         try escaped.writer.writeAll(input[split..]);
         try escaped.finish();
-        try std.testing.expectEqualStrings(expected, out.buffered());
+        try t.expectEqualStrings(expected, out.buffered());
     }
 }

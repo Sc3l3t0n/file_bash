@@ -4,7 +4,6 @@ const command = @import("command.zig");
 const run = @import("run.zig");
 const last = @import("last.zig");
 const print = @import("print.zig");
-const report = @import("report.zig");
 const clean = @import("clean.zig");
 const instruction = @import("instruction.zig");
 
@@ -73,25 +72,17 @@ fn dispatch(
         return 0;
     };
 
-    if (parsed.option) |option| switch (option) {
-        .help => {
-            if (parsed.args.len > 0) {
-                try stderr.writeAll(usage);
-                return 2;
-            }
-            try stdout.writeAll(usage);
-            return 0;
-        },
-        .version => {
-            if (parsed.args.len > 0) {
-                try stderr.writeAll(usage);
-                return 2;
-            }
-
-            try stdout.print("{s}\n", .{build_options.version});
-            return 0;
-        },
-    };
+    if (parsed.option) |option| {
+        if (parsed.args.len > 0) {
+            try stderr.writeAll(usage);
+            return 2;
+        }
+        switch (option) {
+            .help => try stdout.writeAll(usage),
+            .version => try stdout.print("{s}\n", .{build_options.version}),
+        }
+        return 0;
+    }
 
     return switch (parsed.command) {
         .run => run.execute(io, arena, parsed.args, environ, stdout, stderr),
@@ -125,6 +116,5 @@ test {
     _ = clean;
     _ = last;
     _ = print;
-    _ = report;
     _ = instruction;
 }

@@ -1,5 +1,5 @@
-const builtin = @import("builtin");
 const std = @import("std");
+const builtin = @import("builtin");
 const dir = @import("dir.zig");
 const excerpt = @import("excerpt.zig");
 const Output = @import("Output.zig");
@@ -60,27 +60,27 @@ pub fn parse(args: []const [:0]const u8) ?Parsed {
     if (BaseOption.names.get(args[0])) |option| {
         return .{ .command = .run, .option = option, .args = args[1..] };
     }
-
     if (Command.names.get(args[0])) |selected| {
         return .{ .command = selected, .args = args[1..] };
     }
+
     return .{ .command = .run, .args = args };
 }
 
 pub const Run = struct {
     help: bool = false,
     style: Output.Style = .text,
-    source: []const u8,
+    source: []const u8 = "",
     /// Borrowed output directory name; null generates a random name. Reuse overwrites saved output.
     name: ?[]const u8 = null,
     cwd: ?[]const u8 = null,
-    timeout: ?std.Io.Duration,
+    timeout: ?std.Io.Duration = null,
     /// Print the output paths before the command starts instead of after it exits.
-    async: bool,
+    async: bool = false,
     /// Lines of the stdout file to print after the command exits.
-    stdout: Excerpt,
+    stdout: Excerpt = .{},
     /// Lines of the stderr file to print after the command exits.
-    stderr: Excerpt,
+    stderr: Excerpt = .{},
 
     pub const Error = error{
         ConflictingOutputFlags,
@@ -108,27 +108,49 @@ pub const Run = struct {
         pub fn write(diagnostic: Diagnostic, err: Error, out: *std.Io.Writer) !void {
             switch (err) {
                 error.ConflictingOutputFlags => try out.writeAll("--async and --json cannot be used together"),
-                error.MissingCommand => try out.writeAll("missing command; pass one quoted shell command after the options"),
+                error.MissingCommand => try out.writeAll(
+                    "missing command; pass one quoted shell command after the options",
+                ),
                 error.MissingRunId => try out.writeAll("missing run ID; pass one saved run ID after the options"),
                 error.MissingValue => try out.print("option '{s}' requires a value", .{diagnostic.argument}),
                 error.InvalidName => {
-                    try out.print("invalid run name '{s}'; use 1–64 ASCII letters, digits, hyphens, or underscores; last is reserved", .{diagnostic.value});
+                    try out.print(
+                        "invalid run name '{s}'; use 1–64 ASCII letters, digits, hyphens, or underscores; last is reserved",
+                        .{diagnostic.value},
+                    );
                     if (builtin.os.tag == .windows) try out.writeAll("; Windows device names are also reserved");
                 },
                 error.InvalidDirectory => try out.writeAll("working directory must not be empty"),
-                error.InvalidTimeout => try out.print("invalid timeout '{s}' for '{s}'; use a positive integer with ms, s, m, or h (for example, 30s); bare integers mean seconds; maximum count is 4294967295", .{ diagnostic.value, diagnostic.argument }),
-                error.InvalidLineCount => try out.print("invalid line count '{s}' for '{s}'; expected an integer from 1 to 4294967295", .{ diagnostic.value, diagnostic.argument }),
-                error.ConflictingHeadFlags, error.ConflictingTailFlags => {
-                    const kind = if (err == error.ConflictingHeadFlags) "head" else "tail";
-                    try out.print("option '{s}' conflicts with '{s}'; use --{s} for both outputs, or --out:{s} and/or --err:{s} for individual outputs", .{ diagnostic.argument, diagnostic.conflicting, kind, kind, kind });
+                error.InvalidTimeout => try out.print(
+                    "invalid timeout '{s}' for '{s}'; use a positive integer with ms, s, m, or h (for example, 30s); " ++
+                        "bare integers mean seconds; maximum count is {d}",
+                    .{ diagnostic.value, diagnostic.argument, std.math.maxInt(u32) },
+                ),
+                error.InvalidLineCount => try out.print(
+                    "invalid line count '{s}' for '{s}'; expected an integer from 1 to {d}",
+                    .{ diagnostic.value, diagnostic.argument, std.math.maxInt(u32) },
+                ),
+                inline error.ConflictingHeadFlags, error.ConflictingTailFlags => |conflict| {
+                    const kind = if (conflict == error.ConflictingHeadFlags) "head" else "tail";
+                    try out.print(
+                        "option '{s}' conflicts with '{s}'; use --" ++ kind ++ " for both outputs, " ++
+                            "or --out:" ++ kind ++ " and/or --err:" ++ kind ++ " for individual outputs",
+                        .{ diagnostic.argument, diagnostic.conflicting },
+                    );
                 },
-                error.UnknownFlag => try out.print("unknown {s} option '{s}'", .{ @tagName(diagnostic.command), diagnostic.argument }),
+                error.UnknownFlag => try out.print(
+                    "unknown {s} option '{s}'",
+                    .{ @tagName(diagnostic.command), diagnostic.argument },
+                ),
                 error.UnexpectedValue => try out.print("option '{s}' does not take a value", .{diagnostic.argument}),
-                error.UnexpectedArgument => try out.print("unexpected argument '{s}'; {s}", .{ diagnostic.argument, switch (diagnostic.command) {
-                    .last => "fb last takes only reporting options",
-                    .print => "pass exactly one saved run ID, with all fb options before it",
-                    else => "pass exactly one quoted shell command, with all fb options before it",
-                } }),
+                error.UnexpectedArgument => try out.print("unexpected argument '{s}'; {s}", .{
+                    diagnostic.argument,
+                    switch (diagnostic.command) {
+                        .last => "fb last takes only reporting options",
+                        .print => "pass exactly one saved run ID, with all fb options before it",
+                        else => "pass exactly one quoted shell command, with all fb options before it",
+                    },
+                }),
             }
             try out.writeByte('\n');
         }
@@ -179,45 +201,70 @@ pub const Run = struct {
                 else => true,
             };
         }
+
+        /// Which excerpt an option sets and for which streams; null for other options.
+        fn lines(option: Option) ?Lines {
+            return switch (option) {
+                .head => .{ .kind = .head, .streams = .both },
+                .tail => .{ .kind = .tail, .streams = .both },
+                .out_head => .{ .kind = .head, .streams = .stdout },
+                .out_tail => .{ .kind = .tail, .streams = .stdout },
+                .err_head => .{ .kind = .head, .streams = .stderr },
+                .err_tail => .{ .kind = .tail, .streams = .stderr },
+                else => null,
+            };
+        }
+    };
+
+    const Lines = struct {
+        kind: enum { head, tail },
+        streams: Streams,
+    };
+
+    const Streams = enum { both, stdout, stderr };
+
+    /// A head or tail count addresses both streams or individual streams, never a mix.
+    const Scope = struct {
+        streams: ?Streams = null,
+        /// The flag that chose the scope, reported when a later flag conflicts with it.
+        flag: []const u8 = "",
+
+        fn select(scope: *Scope, streams: Streams, flag: []const u8) bool {
+            if (scope.streams) |previous| {
+                if ((previous == .both) != (streams == .both)) return false;
+            }
+            scope.* = .{ .streams = streams, .flag = flag };
+
+            return true;
+        }
     };
 
     pub const ParseOptions = struct {
         diagnostic: ?*Diagnostic = null,
     };
 
-    /// Parses run arguments, borrowing their slices and optionally recording diagnostics.
-    pub fn parse(args: []const [:0]const u8, opts: ParseOptions) Error!Run {
-        return parseFor(.run, args, opts);
-    }
+    /// Parses `run` arguments, `last` reporting options without shell source, or
+    /// `print` reporting options followed by one saved run ID (stored in `name`).
+    /// Argument slices are borrowed; a failure is described in the optional diagnostic.
+    pub fn parse(comptime command: Command, args: []const [:0]const u8, opts: ParseOptions) Error!Run {
+        comptime std.debug.assert(command == .run or command == .last or command == .print);
 
-    /// Parses reporting options without shell source. Argument slices are borrowed.
-    pub fn parseLast(args: []const [:0]const u8, opts: ParseOptions) Error!Run {
-        return parseFor(.last, args, opts);
-    }
+        const diag = opts.diagnostic;
+        if (diag) |d| d.* = .{ .command = command };
 
-    /// Parses reporting options followed by one saved run ID.
-    pub fn parsePrint(args: []const [:0]const u8, opts: ParseOptions) Error!Run {
-        return parseFor(.print, args, opts);
-    }
-
-    fn parseFor(comptime selected_command: Command, args: []const [:0]const u8, opts: ParseOptions) Error!Run {
-        if (opts.diagnostic) |diagnostic| diagnostic.* = .{ .command = selected_command };
-        var run: Run = .{ .source = "", .timeout = null, .async = false, .stdout = .{}, .stderr = .{} };
-        const Scope = enum { none, both, individual };
-        var head_scope: Scope = .none;
-        var tail_scope: Scope = .none;
-        var head_flag: []const u8 = "";
-        var tail_flag: []const u8 = "";
+        var run: Run = .{};
+        var head_scope: Scope = .{};
+        var tail_scope: Scope = .{};
         var rest = args;
 
         while (rest.len > 0 and std.mem.startsWith(u8, rest[0], "-")) {
             const flag = rest[0];
             const separator = std.mem.indexOfScalar(u8, flag, '=');
             const name = flag[0 .. separator orelse flag.len];
-            if (opts.diagnostic) |diagnostic| diagnostic.* = .{ .argument = name, .command = selected_command };
-            const option = Option.names.get(name) orelse return error.UnknownFlag;
+            if (diag) |d| d.* = .{ .argument = name, .command = command };
 
-            if (!selected_command.acceptsOption(option)) return error.UnknownFlag;
+            const option = Option.names.get(name) orelse return error.UnknownFlag;
+            if (!command.acceptsOption(option)) return error.UnknownFlag;
 
             // The value follows `=` or is the next argument.
             var value: []const u8 = "";
@@ -234,8 +281,7 @@ pub const Run = struct {
                 if (separator != null) return error.UnexpectedValue;
                 rest = rest[1..];
             }
-
-            if (opts.diagnostic) |diagnostic| diagnostic.value = value;
+            if (diag) |d| d.value = value;
 
             switch (option) {
                 .help => {
@@ -253,80 +299,53 @@ pub const Run = struct {
                 .timeout => run.timeout = try parseTimeout(value),
                 .async => run.async = true,
                 .json => run.style = .json,
-                .head => {
-                    if (head_scope == .individual) {
-                        if (opts.diagnostic) |diagnostic| diagnostic.conflicting = head_flag;
-                        return error.ConflictingHeadFlags;
+                inline .head, .tail, .out_head, .out_tail, .err_head, .err_tail => |selected| {
+                    const lines = comptime selected.lines().?;
+                    const scope = if (lines.kind == .head) &head_scope else &tail_scope;
+                    if (!scope.select(lines.streams, name)) {
+                        if (diag) |d| d.conflicting = scope.flag;
+                        return switch (lines.kind) {
+                            .head => error.ConflictingHeadFlags,
+                            .tail => error.ConflictingTailFlags,
+                        };
                     }
-                    head_scope = .both;
-                    head_flag = name;
-                    run.stdout.head = try parseLineCount(value);
-                    run.stderr.head = run.stdout.head;
-                },
-                .tail => {
-                    if (tail_scope == .individual) {
-                        if (opts.diagnostic) |diagnostic| diagnostic.conflicting = tail_flag;
-                        return error.ConflictingTailFlags;
-                    }
-                    tail_scope = .both;
-                    tail_flag = name;
-                    run.stdout.tail = try parseLineCount(value);
-                    run.stderr.tail = run.stdout.tail;
-                },
-                inline .out_head, .err_head => |selected| {
-                    if (head_scope == .both) {
-                        if (opts.diagnostic) |diagnostic| diagnostic.conflicting = head_flag;
-                        return error.ConflictingHeadFlags;
-                    }
-                    head_scope = .individual;
-                    head_flag = name;
-                    const stream = if (selected == .out_head) &run.stdout else &run.stderr;
-                    stream.head = try parseLineCount(value);
-                },
-                inline .out_tail, .err_tail => |selected| {
-                    if (tail_scope == .both) {
-                        if (opts.diagnostic) |diagnostic| diagnostic.conflicting = tail_flag;
-                        return error.ConflictingTailFlags;
-                    }
-                    tail_scope = .individual;
-                    tail_flag = name;
-                    const stream = if (selected == .out_tail) &run.stdout else &run.stderr;
-                    stream.tail = try parseLineCount(value);
+
+                    const count = try parsePositive(u32, value, error.InvalidLineCount);
+                    if (lines.streams != .stderr) @field(run.stdout, @tagName(lines.kind)) = count;
+                    if (lines.streams != .stdout) @field(run.stderr, @tagName(lines.kind)) = count;
                 },
             }
         }
 
         if (run.async and run.style == .json) return error.ConflictingOutputFlags;
 
-        if (selected_command == .last) {
-            if (rest.len != 0) {
-                if (opts.diagnostic) |diagnostic| diagnostic.argument = rest[0];
-                return error.UnexpectedArgument;
-            }
-            return run;
+        switch (command) {
+            .last => {
+                if (rest.len != 0) {
+                    if (diag) |d| d.argument = rest[0];
+                    return error.UnexpectedArgument;
+                }
+            },
+            .print => {
+                if (rest.len == 0) return error.MissingRunId;
+                if (rest.len > 1) {
+                    if (diag) |d| d.argument = rest[1];
+                    return error.UnexpectedArgument;
+                }
+                if (diag) |d| d.value = rest[0];
+                if (!dir.validRunName(rest[0])) return error.InvalidName;
+                run.name = rest[0];
+            },
+            else => {
+                if (rest.len == 0) return error.MissingCommand;
+                if (rest.len > 1) {
+                    if (diag) |d| d.argument = rest[1];
+                    return error.UnexpectedArgument;
+                }
+                run.source = rest[0];
+            },
         }
 
-        if (selected_command == .print) {
-            if (rest.len == 0) return error.MissingRunId;
-            if (!dir.validRunName(rest[0])) {
-                if (opts.diagnostic) |diagnostic| diagnostic.value = rest[0];
-                return error.InvalidName;
-            }
-            if (rest.len > 1) {
-                if (opts.diagnostic) |diagnostic| diagnostic.argument = rest[1];
-                return error.UnexpectedArgument;
-            }
-            run.name = rest[0];
-            return run;
-        }
-
-        if (rest.len == 0) return error.MissingCommand;
-        if (rest.len > 1) {
-            if (opts.diagnostic) |diagnostic| diagnostic.argument = rest[1];
-            return error.UnexpectedArgument;
-        }
-
-        run.source = rest[0];
         return run;
     }
 };
@@ -365,20 +384,15 @@ fn parseTimeout(text: []const u8) Run.Error!std.Io.Duration {
         .seconds
     else
         Unit.suffixes.get(suffix) orelse return error.InvalidTimeout;
+    const count = try parsePositive(u32, digits, error.InvalidTimeout);
 
-    return .fromNanoseconds(try amount(digits) * unit.nanoseconds());
+    return .fromNanoseconds(@as(i96, count) * unit.nanoseconds());
 }
 
-fn parseLineCount(text: []const u8) Run.Error!u32 {
-    const value = std.fmt.parseUnsigned(u32, text, 10) catch return error.InvalidLineCount;
-    if (value == 0) return error.InvalidLineCount;
-
-    return value;
-}
-
-fn amount(text: []const u8) Run.Error!i96 {
-    const value = std.fmt.parseUnsigned(u32, text, 10) catch return error.InvalidTimeout;
-    if (value == 0) return error.InvalidTimeout;
+/// Parses a non-zero decimal integer, reporting `invalid` for anything else.
+fn parsePositive(comptime T: type, text: []const u8, comptime invalid: Run.Error) Run.Error!T {
+    const value = std.fmt.parseUnsigned(T, text, 10) catch return invalid;
+    if (value == 0) return invalid;
 
     return value;
 }
@@ -386,30 +400,30 @@ fn amount(text: []const u8) Run.Error!i96 {
 test "run argument parsing" {
     const t = std.testing;
 
-    const bare = try Run.parse(&.{"echo hello"}, .{});
+    const bare = try Run.parse(.run, &.{"echo hello"}, .{});
     try t.expectEqualStrings("echo hello", bare.source);
     try t.expectEqual(null, bare.timeout);
     try t.expectEqual(false, bare.async);
 
     inline for (.{ "-a", "--async" }) |flag| {
-        const run = try Run.parse(&.{ flag, "-t", "5", "echo hello" }, .{});
+        const run = try Run.parse(.run, &.{ flag, "-t", "5", "echo hello" }, .{});
         try t.expectEqual(true, run.async);
         try t.expectEqual(std.Io.Duration.fromNanoseconds(std.time.ns_per_s * 5), run.timeout.?);
         try t.expectEqualStrings("echo hello", run.source);
     }
-    try t.expectError(error.UnexpectedValue, Run.parse(&.{ "--async=1", "echo hello" }, .{}));
+    try t.expectError(error.UnexpectedValue, Run.parse(.run, &.{ "--async=1", "echo hello" }, .{}));
 
-    const both = try Run.parse(&.{ "--head", "3", "--tail=7", "echo hello" }, .{});
+    const both = try Run.parse(.run, &.{ "--head", "3", "--tail=7", "echo hello" }, .{});
     try t.expectEqual(Excerpt{ .head = 3, .tail = 7 }, both.stdout);
     try t.expectEqual(Excerpt{ .head = 3, .tail = 7 }, both.stderr);
 
-    const single = try Run.parse(&.{ "-o:h", "1", "--err:tail", "2", "-e:h=4", "--out:tail=8", "echo hello" }, .{});
+    const single = try Run.parse(.run, &.{ "-o:h", "1", "--err:tail", "2", "-e:h=4", "--out:tail=8", "echo hello" }, .{});
     try t.expectEqual(Excerpt{ .head = 1, .tail = 8 }, single.stdout);
     try t.expectEqual(Excerpt{ .head = 4, .tail = 2 }, single.stderr);
 
-    try t.expectError(error.MissingValue, Run.parse(&.{"-d"}, .{}));
+    try t.expectError(error.MissingValue, Run.parse(.run, &.{"-d"}, .{}));
     inline for (.{ "0", "", "-1", "x", "1s" }) |invalid| {
-        try t.expectError(error.InvalidLineCount, Run.parse(&.{ "--tail", invalid, "echo hello" }, .{}));
+        try t.expectError(error.InvalidLineCount, Run.parse(.run, &.{ "--tail", invalid, "echo hello" }, .{}));
     }
 
     const cases = .{
@@ -423,8 +437,8 @@ test "run argument parsing" {
         const expected: std.Io.Duration = .fromNanoseconds(case[1]);
 
         inline for (.{ "-t", "--timeout" }) |flag| {
-            const separate = try Run.parse(&.{ flag, case[0], "echo hello" }, .{});
-            const joined = try Run.parse(&.{ flag ++ "=" ++ case[0], "echo hello" }, .{});
+            const separate = try Run.parse(.run, &.{ flag, case[0], "echo hello" }, .{});
+            const joined = try Run.parse(.run, &.{ flag ++ "=" ++ case[0], "echo hello" }, .{});
 
             try t.expectEqual(expected, separate.timeout.?);
             try t.expectEqual(expected, joined.timeout.?);
@@ -433,17 +447,17 @@ test "run argument parsing" {
         }
     }
 
-    try t.expectError(error.MissingCommand, Run.parse(&.{}, .{}));
-    try t.expectError(error.MissingCommand, Run.parse(&.{ "--timeout", "5" }, .{}));
-    try t.expectError(error.MissingValue, Run.parse(&.{"--timeout"}, .{}));
-    try t.expectError(error.MissingValue, Run.parse(&.{"-t"}, .{}));
-    try t.expectError(error.UnknownFlag, Run.parse(&.{ "-x", "echo hello" }, .{}));
-    try t.expectError(error.UnknownFlag, Run.parse(&.{ "--quiet", "echo hello" }, .{}));
-    try t.expectError(error.UnknownFlag, Run.parse(&.{ "--timeoutish=5", "echo hello" }, .{}));
-    try t.expectError(error.UnexpectedArgument, Run.parse(&.{ "echo hello", "extra" }, .{}));
+    try t.expectError(error.MissingCommand, Run.parse(.run, &.{}, .{}));
+    try t.expectError(error.MissingCommand, Run.parse(.run, &.{ "--timeout", "5" }, .{}));
+    try t.expectError(error.MissingValue, Run.parse(.run, &.{"--timeout"}, .{}));
+    try t.expectError(error.MissingValue, Run.parse(.run, &.{"-t"}, .{}));
+    try t.expectError(error.UnknownFlag, Run.parse(.run, &.{ "-x", "echo hello" }, .{}));
+    try t.expectError(error.UnknownFlag, Run.parse(.run, &.{ "--quiet", "echo hello" }, .{}));
+    try t.expectError(error.UnknownFlag, Run.parse(.run, &.{ "--timeoutish=5", "echo hello" }, .{}));
+    try t.expectError(error.UnexpectedArgument, Run.parse(.run, &.{ "echo hello", "extra" }, .{}));
 
     inline for (.{ "0", "0s", "", "s", "-5", "5x", "5 s" }) |invalid| {
-        try t.expectError(error.InvalidTimeout, Run.parse(&.{ "--timeout", invalid, "echo hello" }, .{}));
+        try t.expectError(error.InvalidTimeout, Run.parse(.run, &.{ "--timeout", invalid, "echo hello" }, .{}));
     }
 }
 
@@ -451,30 +465,30 @@ test "head flag scopes are mutually exclusive" {
     const t = std.testing;
 
     inline for (.{ "--head", "-d" }) |general| {
-        const both = try Run.parse(&.{ general, "3", "echo hello" }, .{});
+        const both = try Run.parse(.run, &.{ general, "3", "echo hello" }, .{});
         try t.expectEqual(Excerpt{ .head = 3 }, both.stdout);
         try t.expectEqual(Excerpt{ .head = 3 }, both.stderr);
 
         inline for (.{ "--out:head", "-o:h", "--err:head", "-e:h" }) |specific| {
-            try t.expectError(error.ConflictingHeadFlags, Run.parse(&.{ general, "3", specific, "9", "echo hello" }, .{}));
-            try t.expectError(error.ConflictingHeadFlags, Run.parse(&.{ specific, "9", general, "3", "echo hello" }, .{}));
-            try t.expectError(error.ConflictingHeadFlags, Run.parse(&.{ general ++ "=3", specific ++ "=9", "echo hello" }, .{}));
-            try t.expectError(error.ConflictingHeadFlags, Run.parse(&.{ specific ++ "=9", general ++ "=3", "echo hello" }, .{}));
+            try t.expectError(error.ConflictingHeadFlags, Run.parse(.run, &.{ general, "3", specific, "9", "echo hello" }, .{}));
+            try t.expectError(error.ConflictingHeadFlags, Run.parse(.run, &.{ specific, "9", general, "3", "echo hello" }, .{}));
+            try t.expectError(error.ConflictingHeadFlags, Run.parse(.run, &.{ general ++ "=3", specific ++ "=9", "echo hello" }, .{}));
+            try t.expectError(error.ConflictingHeadFlags, Run.parse(.run, &.{ specific ++ "=9", general ++ "=3", "echo hello" }, .{}));
         }
     }
 
     inline for (.{ "--out:head", "-o:h" }) |out| {
-        const stdout = try Run.parse(&.{ out, "3", "echo hello" }, .{});
+        const stdout = try Run.parse(.run, &.{ out, "3", "echo hello" }, .{});
         try t.expectEqual(Excerpt{ .head = 3 }, stdout.stdout);
         try t.expectEqual(Excerpt{}, stdout.stderr);
 
         inline for (.{ "--err:head", "-e:h" }) |err| {
-            const stderr = try Run.parse(&.{ err, "9", "echo hello" }, .{});
+            const stderr = try Run.parse(.run, &.{ err, "9", "echo hello" }, .{});
             try t.expectEqual(Excerpt{}, stderr.stdout);
             try t.expectEqual(Excerpt{ .head = 9 }, stderr.stderr);
 
-            const both = try Run.parse(&.{ out, "3", err, "9", "echo hello" }, .{});
-            const reversed = try Run.parse(&.{ err ++ "=9", out ++ "=3", "echo hello" }, .{});
+            const both = try Run.parse(.run, &.{ out, "3", err, "9", "echo hello" }, .{});
+            const reversed = try Run.parse(.run, &.{ err ++ "=9", out ++ "=3", "echo hello" }, .{});
             try t.expectEqual(Excerpt{ .head = 3 }, both.stdout);
             try t.expectEqual(Excerpt{ .head = 9 }, both.stderr);
             try t.expectEqual(both.stdout, reversed.stdout);
@@ -487,30 +501,30 @@ test "tail flag scopes are mutually exclusive" {
     const t = std.testing;
 
     inline for (.{ "--tail", "-l" }) |general| {
-        const both = try Run.parse(&.{ general, "3", "echo hello" }, .{});
+        const both = try Run.parse(.run, &.{ general, "3", "echo hello" }, .{});
         try t.expectEqual(Excerpt{ .tail = 3 }, both.stdout);
         try t.expectEqual(Excerpt{ .tail = 3 }, both.stderr);
 
         inline for (.{ "--out:tail", "-o:l", "--err:tail", "-e:l" }) |specific| {
-            try t.expectError(error.ConflictingTailFlags, Run.parse(&.{ general, "3", specific, "9", "echo hello" }, .{}));
-            try t.expectError(error.ConflictingTailFlags, Run.parse(&.{ specific, "9", general, "3", "echo hello" }, .{}));
-            try t.expectError(error.ConflictingTailFlags, Run.parse(&.{ general ++ "=3", specific ++ "=9", "echo hello" }, .{}));
-            try t.expectError(error.ConflictingTailFlags, Run.parse(&.{ specific ++ "=9", general ++ "=3", "echo hello" }, .{}));
+            try t.expectError(error.ConflictingTailFlags, Run.parse(.run, &.{ general, "3", specific, "9", "echo hello" }, .{}));
+            try t.expectError(error.ConflictingTailFlags, Run.parse(.run, &.{ specific, "9", general, "3", "echo hello" }, .{}));
+            try t.expectError(error.ConflictingTailFlags, Run.parse(.run, &.{ general ++ "=3", specific ++ "=9", "echo hello" }, .{}));
+            try t.expectError(error.ConflictingTailFlags, Run.parse(.run, &.{ specific ++ "=9", general ++ "=3", "echo hello" }, .{}));
         }
     }
 
     inline for (.{ "--out:tail", "-o:l" }) |out| {
-        const stdout = try Run.parse(&.{ out, "3", "echo hello" }, .{});
+        const stdout = try Run.parse(.run, &.{ out, "3", "echo hello" }, .{});
         try t.expectEqual(Excerpt{ .tail = 3 }, stdout.stdout);
         try t.expectEqual(Excerpt{}, stdout.stderr);
 
         inline for (.{ "--err:tail", "-e:l" }) |err| {
-            const stderr = try Run.parse(&.{ err, "9", "echo hello" }, .{});
+            const stderr = try Run.parse(.run, &.{ err, "9", "echo hello" }, .{});
             try t.expectEqual(Excerpt{}, stderr.stdout);
             try t.expectEqual(Excerpt{ .tail = 9 }, stderr.stderr);
 
-            const both = try Run.parse(&.{ out, "3", err, "9", "echo hello" }, .{});
-            const reversed = try Run.parse(&.{ err ++ "=9", out ++ "=3", "echo hello" }, .{});
+            const both = try Run.parse(.run, &.{ out, "3", err, "9", "echo hello" }, .{});
+            const reversed = try Run.parse(.run, &.{ err ++ "=9", out ++ "=3", "echo hello" }, .{});
             try t.expectEqual(Excerpt{ .tail = 3 }, both.stdout);
             try t.expectEqual(Excerpt{ .tail = 9 }, both.stderr);
             try t.expectEqual(both.stdout, reversed.stdout);
@@ -522,11 +536,11 @@ test "tail flag scopes are mutually exclusive" {
 test "repeated flags within a scope use the last count" {
     const t = std.testing;
 
-    const both = try Run.parse(&.{ "--head=1", "-d=2", "--tail=3", "-l=4", "echo hello" }, .{});
+    const both = try Run.parse(.run, &.{ "--head=1", "-d=2", "--tail=3", "-l=4", "echo hello" }, .{});
     try t.expectEqual(Excerpt{ .head = 2, .tail = 4 }, both.stdout);
     try t.expectEqual(both.stdout, both.stderr);
 
-    const individual = try Run.parse(&.{ "--out:head=1", "-o:h=2", "--err:tail=3", "-e:l=4", "echo hello" }, .{});
+    const individual = try Run.parse(.run, &.{ "--out:head=1", "-o:h=2", "--err:tail=3", "-e:l=4", "echo hello" }, .{});
     try t.expectEqual(Excerpt{ .head = 2 }, individual.stdout);
     try t.expectEqual(Excerpt{ .tail = 4 }, individual.stderr);
 }
@@ -534,16 +548,17 @@ test "repeated flags within a scope use the last count" {
 test "head and tail scopes are independent" {
     const t = std.testing;
 
-    const head = try Run.parse(&.{ "--head", "3", "--out:tail", "5", "--err:tail", "7", "echo hello" }, .{});
+    const head = try Run.parse(.run, &.{ "--head", "3", "--out:tail", "5", "--err:tail", "7", "echo hello" }, .{});
     try t.expectEqual(Excerpt{ .head = 3, .tail = 5 }, head.stdout);
     try t.expectEqual(Excerpt{ .head = 3, .tail = 7 }, head.stderr);
 
-    const tail = try Run.parse(&.{ "--out:head", "5", "--err:head", "7", "--tail", "3", "echo hello" }, .{});
+    const tail = try Run.parse(.run, &.{ "--out:head", "5", "--err:head", "7", "--tail", "3", "echo hello" }, .{});
     try t.expectEqual(Excerpt{ .head = 5, .tail = 3 }, tail.stdout);
     try t.expectEqual(Excerpt{ .head = 7, .tail = 3 }, tail.stderr);
 }
 
 test "run diagnostics identify the offending arguments" {
+    const t = std.testing;
     const cases = .{
         .{ &.{ "--head=1", "--out:head=2", "echo hello" }, error.ConflictingHeadFlags, "option '--out:head' conflicts with '--head'" },
         .{ &.{ "-e:l=2", "--tail", "1", "echo hello" }, error.ConflictingTailFlags, "option '--tail' conflicts with '-e:l'" },
@@ -553,12 +568,12 @@ test "run diagnostics identify the offending arguments" {
     };
     inline for (cases) |case| {
         var diagnostic: Run.Diagnostic = .{};
-        try std.testing.expectError(case[1], Run.parse(case[0], .{ .diagnostic = &diagnostic }));
+        try t.expectError(case[1], Run.parse(.run, case[0], .{ .diagnostic = &diagnostic }));
 
-        var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+        var out: std.Io.Writer.Allocating = .init(t.allocator);
         defer out.deinit();
         try diagnostic.write(case[1], &out.writer);
-        try std.testing.expect(std.mem.startsWith(u8, out.written(), case[2]));
+        try t.expect(std.mem.startsWith(u8, out.written(), case[2]));
     }
 }
 
@@ -575,8 +590,8 @@ test "command parsing" {
         const run_help = parse(&.{ "run", name }).?;
         try t.expectEqual(Command.run, run_help.command);
         try t.expectEqual(null, run_help.option);
-        try t.expect((try Run.parse(run_help.args, .{})).help);
-        try t.expectError(error.UnexpectedValue, Run.parse(&.{name ++ "=1"}, .{}));
+        try t.expect((try Run.parse(.run, run_help.args, .{})).help);
+        try t.expectError(error.UnexpectedValue, Run.parse(.run, &.{name ++ "=1"}, .{}));
     }
 
     const run_parsed = parse(&.{"echo hello"}).?;
@@ -594,7 +609,7 @@ test "command parsing" {
 
         const run_version = parse(&.{ "run", name }).?;
         try t.expectEqual(null, run_version.option);
-        try t.expectError(error.UnknownFlag, Run.parse(run_version.args, .{}));
+        try t.expectError(error.UnknownFlag, Run.parse(.run, run_version.args, .{}));
     }
 
     inline for (&.{ "install", "init" }) |name| {
@@ -611,83 +626,85 @@ test "command parsing" {
 test "json output option" {
     const t = std.testing;
 
-    try t.expectEqual(.text, (try Run.parse(&.{"true"}, .{})).style);
-    try t.expectEqual(.json, (try Run.parse(&.{ "--json", "true" }, .{})).style);
-    try t.expectError(error.UnexpectedValue, Run.parse(&.{ "--json=true", "true" }, .{}));
+    try t.expectEqual(.text, (try Run.parse(.run, &.{"true"}, .{})).style);
+    try t.expectEqual(.json, (try Run.parse(.run, &.{ "--json", "true" }, .{})).style);
+    try t.expectError(error.UnexpectedValue, Run.parse(.run, &.{ "--json=true", "true" }, .{}));
 }
 
 test "async and json are mutually exclusive" {
     const t = std.testing;
 
-    try t.expectError(error.ConflictingOutputFlags, Run.parse(&.{ "--async", "--json", "true" }, .{}));
-    try t.expectError(error.ConflictingOutputFlags, Run.parse(&.{ "--json", "--async", "true" }, .{}));
+    try t.expectError(error.ConflictingOutputFlags, Run.parse(.run, &.{ "--async", "--json", "true" }, .{}));
+    try t.expectError(error.ConflictingOutputFlags, Run.parse(.run, &.{ "--json", "--async", "true" }, .{}));
 }
 
 test "last accepts reporting options without shell source" {
     const t = std.testing;
     try t.expectEqual(Command.last, parse(&.{"last"}).?.command);
-    const defaults = try Run.parseLast(&.{}, .{});
+    const defaults = try Run.parse(.last, &.{}, .{});
     try t.expectEqual(Excerpt{}, defaults.stdout);
     try t.expectEqual(Output.Style.text, defaults.style);
 
     inline for (.{ "--head", "-d", "--tail", "-l", "--out:head", "-o:h", "--out:tail", "-o:l", "--err:head", "-e:h", "--err:tail", "-e:l" }) |flag| {
-        const run = try Run.parse(&.{ "--json", flag, "3", "echo hello" }, .{});
-        const last = try Run.parseLast(&.{ "--json", flag ++ "=3" }, .{});
+        const run = try Run.parse(.run, &.{ "--json", flag, "3", "echo hello" }, .{});
+        const last = try Run.parse(.last, &.{ "--json", flag ++ "=3" }, .{});
         try t.expectEqual(run.stdout, last.stdout);
         try t.expectEqual(run.stderr, last.stderr);
         try t.expectEqual(run.style, last.style);
     }
-    try t.expectError(error.UnknownFlag, Run.parseLast(&.{"--async"}, .{}));
-    try t.expectError(error.UnknownFlag, Run.parseLast(&.{ "--timeout", "5s" }, .{}));
-    try t.expectError(error.UnexpectedArgument, Run.parseLast(&.{"echo hello"}, .{}));
-    try t.expectError(error.MissingValue, Run.parseLast(&.{"--head"}, .{}));
-    try t.expectError(error.InvalidLineCount, Run.parseLast(&.{"--tail=0"}, .{}));
-    try t.expectError(error.ConflictingHeadFlags, Run.parseLast(&.{ "--head=1", "--out:head=2" }, .{}));
-    try t.expectError(error.ConflictingTailFlags, Run.parseLast(&.{ "--err:tail=1", "--tail=2" }, .{}));
+    try t.expectError(error.UnknownFlag, Run.parse(.last, &.{"--async"}, .{}));
+    try t.expectError(error.UnknownFlag, Run.parse(.last, &.{ "--timeout", "5s" }, .{}));
+    try t.expectError(error.UnexpectedArgument, Run.parse(.last, &.{"echo hello"}, .{}));
+    try t.expectError(error.MissingValue, Run.parse(.last, &.{"--head"}, .{}));
+    try t.expectError(error.InvalidLineCount, Run.parse(.last, &.{"--tail=0"}, .{}));
+    try t.expectError(error.ConflictingHeadFlags, Run.parse(.last, &.{ "--head=1", "--out:head=2" }, .{}));
+    try t.expectError(error.ConflictingTailFlags, Run.parse(.last, &.{ "--err:tail=1", "--tail=2" }, .{}));
 }
 
 test "print accepts reporting options followed by one valid run ID" {
     const t = std.testing;
     try t.expectEqual(Command.print, parse(&.{ "print", "build_1" }).?.command);
-    const parsed = try Run.parsePrint(&.{ "--json", "--out:tail=3", "build_1" }, .{});
+
+    const parsed = try Run.parse(.print, &.{ "--json", "--out:tail=3", "build_1" }, .{});
     try t.expectEqual(Output.Style.json, parsed.style);
-    try t.expectEqual(@as(?u32, 3), parsed.stdout.tail);
+    try t.expectEqual(3, parsed.stdout.tail);
     try t.expectEqualStrings("build_1", parsed.name.?);
-    try t.expectError(error.MissingRunId, Run.parsePrint(&.{}, .{}));
-    try t.expectError(error.InvalidName, Run.parsePrint(&.{"../build"}, .{}));
-    try t.expectError(error.UnexpectedArgument, Run.parsePrint(&.{ "build", "extra" }, .{}));
-    try t.expectError(error.UnknownFlag, Run.parsePrint(&.{ "--name", "build", "saved" }, .{}));
+
+    try t.expectError(error.MissingRunId, Run.parse(.print, &.{}, .{}));
+    try t.expectError(error.InvalidName, Run.parse(.print, &.{"../build"}, .{}));
+    try t.expectError(error.UnexpectedArgument, Run.parse(.print, &.{ "build", "extra" }, .{}));
+    try t.expectError(error.UnknownFlag, Run.parse(.print, &.{ "--name", "build", "saved" }, .{}));
 }
 
 test "named runs accept portable names and reject paths and reserved names" {
     const t = std.testing;
     inline for (.{ "--name", "-n" }) |flag| {
-        try t.expectEqualStrings("build_1-debug", (try Run.parse(&.{ flag, "build_1-debug", "true" }, .{})).name.?);
-        try t.expectEqualStrings("build", (try Run.parse(&.{ flag ++ "=build", "true" }, .{})).name.?);
-        try t.expectError(error.MissingValue, Run.parse(&.{flag}, .{}));
-        try t.expectError(error.UnknownFlag, Run.parseLast(&.{ flag, "build" }, .{}));
+        try t.expectEqualStrings("build_1-debug", (try Run.parse(.run, &.{ flag, "build_1-debug", "true" }, .{})).name.?);
+        try t.expectEqualStrings("build", (try Run.parse(.run, &.{ flag ++ "=build", "true" }, .{})).name.?);
+        try t.expectError(error.MissingValue, Run.parse(.run, &.{flag}, .{}));
+        try t.expectError(error.UnknownFlag, Run.parse(.last, &.{ flag, "build" }, .{}));
     }
     inline for (.{ "", ".", "..", "../build", "a/b", "a\\b", "C:build", "last", "LAST", "build.", "two words", "x" ** 65 }) |name| {
-        try t.expectError(error.InvalidName, Run.parse(&.{ "--name", name, "true" }, .{}));
+        try t.expectError(error.InvalidName, Run.parse(.run, &.{ "--name", name, "true" }, .{}));
     }
     inline for (.{ "CON", "NUL", "com1", "LPT9" }) |name| {
         if (builtin.os.tag == .windows) {
-            try t.expectError(error.InvalidName, Run.parse(&.{ "--name", name, "true" }, .{}));
+            try t.expectError(error.InvalidName, Run.parse(.run, &.{ "--name", name, "true" }, .{}));
         } else {
-            try t.expectEqualStrings(name, (try Run.parse(&.{ "--name", name, "true" }, .{})).name.?);
+            try t.expectEqualStrings(name, (try Run.parse(.run, &.{ "--name", name, "true" }, .{})).name.?);
         }
     }
-    try t.expectEqual(null, (try Run.parse(&.{"true"}, .{})).name);
+    try t.expectEqual(null, (try Run.parse(.run, &.{"true"}, .{})).name);
 }
 
 test "working directory arguments" {
     const t = std.testing;
-    const parsed = try Run.parse(&.{ "-C", ".", "pwd" }, .{});
+    const parsed = try Run.parse(.run, &.{ "-C", ".", "pwd" }, .{});
     try t.expectEqualStrings(".", parsed.cwd.?);
-    const equals = try Run.parse(&.{ "-C=.", "pwd" }, .{});
+    const equals = try Run.parse(.run, &.{ "-C=.", "pwd" }, .{});
     try t.expectEqualStrings(".", equals.cwd.?);
-    try t.expectEqual(null, (try Run.parse(&.{"pwd"}, .{})).cwd);
-    try t.expectError(error.MissingValue, Run.parse(&.{"-C"}, .{}));
-    try t.expectError(error.InvalidDirectory, Run.parse(&.{ "-C=", "pwd" }, .{}));
-    try t.expectError(error.UnknownFlag, Run.parseLast(&.{ "-C", "relative" }, .{}));
+    try t.expectEqual(null, (try Run.parse(.run, &.{"pwd"}, .{})).cwd);
+    try t.expectError(error.MissingValue, Run.parse(.run, &.{"-C"}, .{}));
+    try t.expectError(error.InvalidDirectory, Run.parse(.run, &.{ "-C=", "pwd" }, .{}));
+    try t.expectError(error.UnknownFlag, Run.parse(.last, &.{ "-C", "relative" }, .{}));
 }

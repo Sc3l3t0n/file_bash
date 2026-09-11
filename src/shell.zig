@@ -10,17 +10,6 @@ pub const Shell = enum {
     cmd,
     powershell,
     pwsh,
-
-    const names = std.StaticStringMap(Shell).initComptime(.{
-        .{ "sh", .sh },
-        .{ "bash", .bash },
-        .{ "zsh", .zsh },
-        .{ "fish", .fish },
-        .{ "nu", .nu },
-        .{ "cmd", .cmd },
-        .{ "powershell", .powershell },
-        .{ "pwsh", .pwsh },
-    });
 };
 
 const environment_name = "FILE_BASH_SHELL";
@@ -39,11 +28,11 @@ const Argv = union(enum) {
 };
 
 pub fn command(environ: *const std.process.Environ.Map, source: []const u8) !Argv {
-    const configured = environ.get(environment_name);
-    const selected = if (configured == null or configured.?.len == 0)
+    const configured = environ.get(environment_name) orelse "";
+    const selected: Shell = if (configured.len == 0)
         default_shell
     else
-        Shell.names.get(configured.?) orelse return error.UnknownShell;
+        std.meta.stringToEnum(Shell, configured) orelse return error.UnknownShell;
 
     return switch (selected) {
         inline .sh, .bash, .zsh, .fish, .nu => |shell| .{ .three = .{ @tagName(shell), "-c", source } },
@@ -60,7 +49,8 @@ pub fn command(environ: *const std.process.Environ.Map, source: []const u8) !Arg
 }
 
 test "configured shell command lines" {
-    var environ = std.process.Environ.Map.init(std.testing.allocator);
+    const t = std.testing;
+    var environ: std.process.Environ.Map = .init(t.allocator);
     defer environ.deinit();
 
     const cases = .{
@@ -75,7 +65,7 @@ test "configured shell command lines" {
         try environ.put(environment_name, case[0]);
         const shell_command = try command(&environ, "echo hello");
         const expected: []const []const u8 = case[1];
-        try std.testing.expectEqualDeep(expected, shell_command.slice());
+        try t.expectEqualDeep(expected, shell_command.slice());
     }
 
     const windows_cases = .{
@@ -87,12 +77,12 @@ test "configured shell command lines" {
         if (builtin.os.tag == .windows) {
             const shell_command = try command(&environ, "echo hello");
             const expected: []const []const u8 = case[1];
-            try std.testing.expectEqualDeep(expected, shell_command.slice());
+            try t.expectEqualDeep(expected, shell_command.slice());
         } else {
-            try std.testing.expectError(error.UnsupportedShell, command(&environ, "echo hello"));
+            try t.expectError(error.UnsupportedShell, command(&environ, "echo hello"));
         }
     }
 
     try environ.put(environment_name, "unknown");
-    try std.testing.expectError(error.UnknownShell, command(&environ, "echo hello"));
+    try t.expectError(error.UnknownShell, command(&environ, "echo hello"));
 }

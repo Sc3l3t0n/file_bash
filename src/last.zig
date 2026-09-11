@@ -12,7 +12,7 @@ const usage =
     \\The run ID is stored in file_bash/last under the temporary directory.
     \\
     \\Options:
-    \\  --json                   print results as JSON
+    \\  --json                    print results as JSON
     \\  -d, --head <n>            first n lines of stdout and stderr
     \\  -l, --tail <n>            last n lines of stdout and stderr
     \\  -o:h, --out:head <n>      first n lines of stdout only
@@ -39,7 +39,7 @@ pub fn execute(
     stderr: *std.Io.Writer,
 ) !u8 {
     var diagnostic: command.Run.Diagnostic = .{};
-    const parsed = command.Run.parseLast(args, .{ .diagnostic = &diagnostic }) catch |err| {
+    const parsed = command.Run.parse(.last, args, .{ .diagnostic = &diagnostic }) catch |err| {
         try diagnostic.write(err, stderr);
         try stderr.writeAll(usage);
         return 2;
@@ -49,20 +49,16 @@ pub fn execute(
         return 0;
     }
 
-    const temp_path = try dir.tempPath(environ);
-    var temp = try std.Io.Dir.openDirAbsolute(io, temp_path, .{});
-    defer temp.close(io);
-    var parent = temp.openDir(io, dir.output_dirname, .{}) catch |err| switch (err) {
-        error.FileNotFound => return missing(stderr),
-        else => return err,
-    };
-    defer parent.close(io);
-    const id = parent.readFileAlloc(io, dir.last_filename, arena, .limited(64)) catch |err| switch (err) {
+    const outputs = try dir.openOutputs(io, environ) orelse return missing(stderr);
+    defer outputs.parent.close(io);
+
+    const id = outputs.parent.readFileAlloc(io, dir.last_filename, arena, .limited(64)) catch |err| switch (err) {
         error.FileNotFound => return missing(stderr),
         else => return err,
     };
     if (!dir.validRunName(id)) return error.InvalidLastRunId;
-    return report.report(io, arena, parent, temp_path, .{ .last = id }, parsed.style, parsed.stdout, parsed.stderr, stdout, stderr);
+
+    return report.write(io, arena, outputs, id, .last, parsed, stdout, stderr);
 }
 
 fn missing(stderr: *std.Io.Writer) !u8 {
@@ -103,8 +99,9 @@ test "last reads output with new excerpt options and clean removes the last poin
     try directory.writeFile(io, .{ .sub_path = "stderr", .data = "" });
     const output_path = try std.fs.path.join(arena, &.{ path, dir.output_dirname, id });
     const output: Output = .{
-        .stdout = .{ .path = output_path, .filename = "stdout", .size = 6, .lines = .{ .head = 1 } },
-        .stderr = .{ .path = output_path, .filename = "stderr", .lines = .{ .head = 1 } },
+        .path = output_path,
+        .stdout = .{ .size = 6, .lines = .{ .head = 1 } },
+        .stderr = .{ .lines = .{ .head = 1 } },
         .exit_code = 124,
         .timed_out = true,
     };
@@ -115,7 +112,7 @@ test "last reads output with new excerpt options and clean removes the last poin
     inline for (.{ Output.Style.text, Output.Style.json }) |style| {
         var expected: std.Io.Writer.Allocating = .init(arena);
         var actual: std.Io.Writer.Allocating = .init(arena);
-        if (style == .text) try Output.writePaths(output.stdout, output.stderr, &expected.writer);
+        if (style == .text) try Output.writePaths(output_path, &expected.writer);
         try output.writeReport(io, directory, style, &expected.writer);
         const args: []const [:0]const u8 = if (style == .json) &.{ "--json", "--head", "1" } else &.{ "--head", "1" };
         try t.expectEqual(124, try execute(io, arena, args, &environ, &actual.writer, &err.writer));

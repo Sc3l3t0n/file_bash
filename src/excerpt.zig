@@ -92,18 +92,19 @@ pub fn tail(io: std.Io, file: std.Io.File, count: u32, out: *std.Io.Writer) !voi
 }
 
 fn expect(data: []const u8, excerpt: Excerpt, expected: []const u8) !void {
-    const io = std.testing.io;
-    var tmp = std.testing.tmpDir(.{});
+    const t = std.testing;
+    const io = t.io;
+    var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
 
     try tmp.dir.writeFile(io, .{ .sub_path = "f", .data = data });
     const file = try tmp.dir.openFile(io, "f", .{});
     defer file.close(io);
 
-    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    var out: std.Io.Writer.Allocating = .init(t.allocator);
     defer out.deinit();
     try write(io, file, excerpt, "x", &out.writer);
-    try std.testing.expectEqualStrings(expected, out.written());
+    try t.expectEqualStrings(expected, out.written());
 }
 
 test "head" {

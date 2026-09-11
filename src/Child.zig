@@ -67,6 +67,21 @@ pub fn wait(child: *Child, io: std.Io) !Status {
     return .fromTerm(try child.process.wait(io));
 }
 
+const Waited = std.process.Child.WaitError!std.process.Child.Term;
+
+const Event = union(enum) {
+    finished: Waited,
+    expired: std.Io.Cancelable!void,
+};
+
+fn waitProcess(io: std.Io, process: *std.process.Child) Waited {
+    return process.wait(io);
+}
+
+fn expire(io: std.Io, timeout: std.Io.Duration) std.Io.Cancelable!void {
+    return io.sleep(timeout, .awake);
+}
+
 fn waitTimeout(child: *Child, io: std.Io, timeout: std.Io.Duration) !Status {
     // The identifier is still set because the child was spawned and has not
     // been waited on yet. Terminating uses it directly because only the
@@ -138,39 +153,6 @@ fn nonInteractive(
     return map;
 }
 
-test "child environment is non-interactive" {
-    var parent: std.process.Environ.Map = .init(std.testing.allocator);
-    defer parent.deinit();
-
-    try parent.put("PATH", "/usr/bin");
-    try parent.put("NO_COLOR", "0");
-
-    var child_environ = try nonInteractive(std.testing.allocator, &parent);
-    defer child_environ.deinit();
-
-    try std.testing.expectEqualStrings("/usr/bin", child_environ.get("PATH").?);
-    // Only `PATH` is inherited; `NO_COLOR` is replaced rather than duplicated.
-    try std.testing.expectEqual(overrides.len + 1, child_environ.count());
-    for (overrides) |override| {
-        try std.testing.expectEqualStrings(override.value, child_environ.get(override.key).?);
-    }
-}
-
-const Waited = std.process.Child.WaitError!std.process.Child.Term;
-
-const Event = union(enum) {
-    finished: Waited,
-    expired: std.Io.Cancelable!void,
-};
-
-fn waitProcess(io: std.Io, process: *std.process.Child) Waited {
-    return process.wait(io);
-}
-
-fn expire(io: std.Io, timeout: std.Io.Duration) std.Io.Cancelable!void {
-    return io.sleep(timeout, .awake);
-}
-
 /// Exit status reported for a child that fb terminated on Windows.
 const terminated_exit_status: std.os.windows.NTSTATUS = @enumFromInt(1);
 
@@ -183,5 +165,24 @@ fn terminate(id: std.process.Child.Id) !void {
             else => |status| return std.os.windows.unexpectedStatus(status),
         },
         else => try std.posix.kill(-id, .KILL),
+    }
+}
+
+test "child environment is non-interactive" {
+    const t = std.testing;
+    var parent: std.process.Environ.Map = .init(t.allocator);
+    defer parent.deinit();
+
+    try parent.put("PATH", "/usr/bin");
+    try parent.put("NO_COLOR", "0");
+
+    var child_environ = try nonInteractive(t.allocator, &parent);
+    defer child_environ.deinit();
+
+    try t.expectEqualStrings("/usr/bin", child_environ.get("PATH").?);
+    // Only `PATH` is inherited; `NO_COLOR` is replaced rather than duplicated.
+    try t.expectEqual(overrides.len + 1, child_environ.count());
+    for (overrides) |override| {
+        try t.expectEqualStrings(override.value, child_environ.get(override.key).?);
     }
 }

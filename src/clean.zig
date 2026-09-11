@@ -1,6 +1,8 @@
 const std = @import("std");
 const dir = @import("dir.zig");
 
+const nothing_to_clean = "fb outputs already cleaned up\n";
+
 const usage =
     \\Usage: fb clean
     \\
@@ -39,7 +41,7 @@ pub fn execute(
         .follow_symlinks = false,
     }) catch |err| switch (err) {
         error.FileNotFound => {
-            try stdout.writeAll("fb outputs already cleaned up\n");
+            try stdout.writeAll(nothing_to_clean);
             return 0;
         },
         else => return err,
@@ -52,10 +54,11 @@ pub fn execute(
         try output_dir.deleteTree(io, child.name);
         deleted += 1;
     }
-    if (deleted > 0) {
-        try stdout.print("cleaned up {d} fb outputs\n", .{deleted});
+    if (deleted == 0) {
+        try stdout.writeAll(nothing_to_clean);
     } else {
-        try stdout.writeAll("fb outputs already cleaned up\n");
+        try stdout.print("cleaned up {d} fb outputs\n", .{deleted});
     }
+
     return 0;
 }

@@ -28,43 +28,67 @@ pub fn tempPath(environ: *const std.process.Environ.Map) ![]const u8 {
 test "Unix temporary directory override, empty value, fallback, and relative path" {
     if (builtin.os.tag != .linux and builtin.os.tag != .macos) return error.SkipZigTest;
 
-    var environ = std.process.Environ.Map.init(std.testing.allocator);
+    const t = std.testing;
+    var environ: std.process.Environ.Map = .init(t.allocator);
     defer environ.deinit();
 
     try environ.put("TMPDIR", "");
-    try std.testing.expectEqualStrings("/tmp", try tempPath(&environ));
+    try t.expectEqualStrings("/tmp", try tempPath(&environ));
 
     try environ.put("TMPDIR", "/custom temp/");
-    try std.testing.expectEqualStrings("/custom temp/", try tempPath(&environ));
+    try t.expectEqualStrings("/custom temp/", try tempPath(&environ));
 
     try environ.put("TMPDIR", "relative");
-    try std.testing.expectError(error.TemporaryDirectoryMustBeAbsolute, tempPath(&environ));
+    try t.expectError(error.TemporaryDirectoryMustBeAbsolute, tempPath(&environ));
 }
 
 test "Windows temporary directory precedence and missing environment" {
     if (builtin.os.tag != .windows) return error.SkipZigTest;
 
-    var environ = std.process.Environ.Map.init(std.testing.allocator);
+    const t = std.testing;
+    var environ: std.process.Environ.Map = .init(t.allocator);
     defer environ.deinit();
 
-    try std.testing.expectError(error.TemporaryDirectoryNotFound, tempPath(&environ));
+    try t.expectError(error.TemporaryDirectoryNotFound, tempPath(&environ));
 
     try environ.put("USERPROFILE", "C:\\Users\\user");
     try environ.put("SystemRoot", "C:\\Windows");
-    try std.testing.expectError(error.TemporaryDirectoryNotFound, tempPath(&environ));
+    try t.expectError(error.TemporaryDirectoryNotFound, tempPath(&environ));
 
     const keys = [_][]const u8{ "TEMP", "TMP" };
     const paths = [_][]const u8{ "C:\\temp", "D:\\tmp" };
     for (keys, paths) |key, path| {
         try environ.put(key, path);
-        try std.testing.expectEqualStrings(path, try tempPath(&environ));
+        try t.expectEqualStrings(path, try tempPath(&environ));
     }
 
     try environ.put("TMP", "");
-    try std.testing.expectEqualStrings("C:\\temp", try tempPath(&environ));
+    try t.expectEqualStrings("C:\\temp", try tempPath(&environ));
 
     try environ.put("TMP", "relative");
-    try std.testing.expectError(error.TemporaryDirectoryMustBeAbsolute, tempPath(&environ));
+    try t.expectError(error.TemporaryDirectoryMustBeAbsolute, tempPath(&environ));
+}
+
+/// The shared parent of every run directory, opened for reading.
+pub const Outputs = struct {
+    /// Borrowed from the environment map; see `tempPath`.
+    temp_path: []const u8,
+    parent: std.Io.Dir,
+};
+
+/// Opens the output directory under the temporary directory, or returns null
+/// when no run has created it yet.
+pub fn openOutputs(io: std.Io, environ: *const std.process.Environ.Map) !?Outputs {
+    const temp_path = try tempPath(environ);
+    var temp = try std.Io.Dir.openDirAbsolute(io, temp_path, .{});
+    defer temp.close(io);
+
+    const parent = temp.openDir(io, output_dirname, .{}) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return err,
+    };
+
+    return .{ .temp_path = temp_path, .parent = parent };
 }
 
 /// Returns a borrowed absolute home path without allocating.
@@ -79,21 +103,22 @@ pub fn homePath(environ: *const std.process.Environ.Map) ![]const u8 {
 }
 
 test "home directory must be present and absolute" {
-    var environ = std.process.Environ.Map.init(std.testing.allocator);
+    const t = std.testing;
+    var environ: std.process.Environ.Map = .init(t.allocator);
     defer environ.deinit();
 
     const key = if (builtin.os.tag == .windows) "USERPROFILE" else "HOME";
-    try std.testing.expectError(error.HomeDirectoryNotFound, homePath(&environ));
+    try t.expectError(error.HomeDirectoryNotFound, homePath(&environ));
 
     try environ.put(key, "");
-    try std.testing.expectError(error.HomeDirectoryNotFound, homePath(&environ));
+    try t.expectError(error.HomeDirectoryNotFound, homePath(&environ));
 
     try environ.put(key, "relative");
-    try std.testing.expectError(error.HomeDirectoryMustBeAbsolute, homePath(&environ));
+    try t.expectError(error.HomeDirectoryMustBeAbsolute, homePath(&environ));
 
     const path = if (builtin.os.tag == .windows) "C:\\Users\\test" else "/home/test";
     try environ.put(key, path);
-    try std.testing.expectEqualStrings(path, try homePath(&environ));
+    try t.expectEqualStrings(path, try homePath(&environ));
 }
 
 /// Portable single-component run names, excluding internal and Windows device names.
@@ -108,7 +133,11 @@ pub fn validRunName(name: []const u8) bool {
         inline for (.{ "CON", "PRN", "AUX", "NUL", "CONIN", "CONOUT" }) |reserved| {
             if (std.ascii.eqlIgnoreCase(name, reserved)) return false;
         }
-        if (name.len == 4 and (std.ascii.eqlIgnoreCase(name[0..3], "COM") or std.ascii.eqlIgnoreCase(name[0..3], "LPT")) and name[3] >= '1' and name[3] <= '9') return false;
+        if (name.len == 4 and name[3] >= '1' and name[3] <= '9') {
+            inline for (.{ "COM", "LPT" }) |device| {
+                if (std.ascii.eqlIgnoreCase(name[0..3], device)) return false;
+            }
+        }
     }
     return true;
 }
