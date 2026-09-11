@@ -21,13 +21,14 @@ fb run 'echo hello'
 
 The runner prints the absolute paths to separate `stdout` and `stderr` files in
 a unique directory under `file_bash/` in the temporary directory. Once the
-command finishes, it also prints each file's size in bytes and the exit code.
+command finishes, it prints a summary header with the exit code and duration,
+followed by each stream's size and file path, and any requested excerpts.
 Output goes directly to the files while the command runs, and the files remain
 until you remove them or the system cleans its temporary directory.
 
 With `--async` (short form `-a`), paths are printed before the command starts so
-the files can be followed while it runs. File sizes are always printed after
-the command finishes, after any requested excerpts.
+the files can be followed while it runs. The summary header, file sizes, and
+requested excerpts are printed after the command finishes.
 
 ## Named and recent runs
 
@@ -66,8 +67,8 @@ fb print --json 0123456789abcdef0123456789abcdef
 
 Each run writes only its ID to `file_bash/last` after successfully starting the
 shell. A failed start leaves the previous run ID unchanged. The run directory
-retains stdout, stderr, and a two-byte `status` file containing the exit code and
-timeout flag. `run`, `last`, and `print` build reports from these files and return the
+retains stdout, stderr, and a ten-byte `status` file containing the exit code,
+the timeout flag, and the duration in nanoseconds. `run`, `last`, and `print` build reports from these files and return the
 command's exit code. Overlapping runs select the most recently started run. If
 no run is saved or its completion status is unavailable, `last` reports an
 error and returns 1.
@@ -81,7 +82,8 @@ Stop running commands before cleaning their output. Use `fb clean --help` (or
 ## Output excerpts
 
 `--head <n>` and `--tail <n>` (short `-d`, `-l`) print the first or last `n`
-lines of both output files after the command exits, each under a marker line.
+lines of both output files after the command exits, each enclosed between
+`>>> <stream> <head|tail> <n>` and `<<<` markers.
 `--out:head`, `--out:tail`, `--err:head`, and `--err:tail` (short `-o:d`,
 `-o:l`, `-e:d`, `-e:l`) restrict this to one file.
 
@@ -100,8 +102,9 @@ fb run -o:l 5 -e:l=50 'make'
 
 `--json` prints one JSON object on completion instead of the text report. It
 cannot be combined with `--async`. Both streams contain `path` and `size` in
-bytes, plus `head` and/or `tail` when requested. The result includes `exit_code`
-and `timed_out`; `fb` still returns the command's exit code. Diagnostics go to
+bytes, plus `head` and/or `tail` when requested. The result includes `exit_code`,
+`timed_out`, and `duration_ns`, the command's run time in nanoseconds; `fb`
+still returns the command's exit code. Diagnostics go to
 stderr.
 
 ```sh

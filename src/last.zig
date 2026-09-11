@@ -104,11 +104,16 @@ test "last reads output with new excerpt options and clean removes the last poin
         .stderr = .{ .lines = .{ .head = 1 } },
         .exit_code = 124,
         .timed_out = true,
+        .duration = .fromMilliseconds(1500),
     };
     try remember(io, parent, id);
     try t.expectEqualStrings(id, try parent.readFileAlloc(io, dir.last_filename, arena, .limited(33)));
     try t.expectEqual(1, try execute(io, arena, &.{}, &environ, &out.writer, &err.writer));
-    try (Output.Status{ .exit_code = output.exit_code, .timed_out = output.timed_out }).save(io, directory);
+    try (Output.Status{
+        .exit_code = output.exit_code,
+        .timed_out = output.timed_out,
+        .duration = output.duration,
+    }).save(io, directory);
     inline for (.{ Output.Style.text, Output.Style.json }) |style| {
         var expected: std.Io.Writer.Allocating = .init(arena);
         var actual: std.Io.Writer.Allocating = .init(arena);

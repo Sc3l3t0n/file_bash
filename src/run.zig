@@ -135,7 +135,11 @@ pub fn execute(
         try stderr.print("command timed out after {f} and was killed\n", .{parsed.timeout.?});
     }
 
-    try (Output.Status{ .exit_code = status.code, .timed_out = status.timed_out }).save(io, output_dir);
+    try (Output.Status{
+        .exit_code = status.code,
+        .timed_out = status.timed_out,
+        .duration = status.duration,
+    }).save(io, output_dir);
     const output = try Output.read(io, output_dir, output_path, parsed.stdout, parsed.stderr);
     try output.writeReport(io, output_dir, parsed.style, stdout);
 

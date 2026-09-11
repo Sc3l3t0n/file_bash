@@ -5,6 +5,8 @@ const Child = @This();
 
 process: std.process.Child,
 timeout: ?std.Io.Duration,
+/// Monotonic time taken right after the process started.
+started: std.Io.Timestamp,
 
 pub const Options = struct {
     argv: []const []const u8,
@@ -22,27 +24,34 @@ pub const Options = struct {
 /// The child environment is allocated in `arena`.
 pub fn spawn(io: std.Io, arena: std.mem.Allocator, options: Options) !Child {
     var environ = try nonInteractive(arena, options.environ);
+    const process = try std.process.spawn(io, .{
+        .argv = options.argv,
+        .cwd = if (options.cwd) |cwd| .{ .dir = cwd } else .inherit,
+        .environ_map = &environ,
+        .stdout = .{ .file = options.stdout },
+        .stderr = .{ .file = options.stderr },
+        .stdin = .close,
+        // A timed run leads its own process group so a timeout can kill
+        // the whole command tree; without one, signals keep reaching the
+        // child.
+        .pgid = if (builtin.os.tag == .windows or options.timeout == null) null else 0,
+    });
 
     return .{
-        .process = try std.process.spawn(io, .{
-            .argv = options.argv,
-            .cwd = if (options.cwd) |cwd| .{ .dir = cwd } else .inherit,
-            .environ_map = &environ,
-            .stdout = .{ .file = options.stdout },
-            .stderr = .{ .file = options.stderr },
-            .stdin = .close,
-            // A timed run leads its own process group so a timeout can kill
-            // the whole command tree; without one, signals keep reaching the
-            // child.
-            .pgid = if (builtin.os.tag == .windows or options.timeout == null) null else 0,
-        }),
+        .process = process,
         .timeout = options.timeout,
+        .started = clock.now(io),
     };
 }
+
+/// Measures how long the command ran; unaffected by wall-clock adjustments.
+const clock: std.Io.Clock = .awake;
 
 pub const Status = struct {
     code: u8,
     timed_out: bool,
+    /// Time from spawn until the child was reaped.
+    duration: std.Io.Duration = .zero,
 
     /// Matches the exit code `timeout(1)` reports for an expired command.
     pub const timeout_code: u8 = 124;
@@ -62,9 +71,13 @@ pub const Status = struct {
 /// Waits for the command, terminating it when its timeout elapses first. The
 /// child is reaped in either case. Call once per spawned child.
 pub fn wait(child: *Child, io: std.Io) !Status {
-    if (child.timeout) |timeout| return child.waitTimeout(io, timeout);
+    var status: Status = if (child.timeout) |timeout|
+        try child.waitTimeout(io, timeout)
+    else
+        .fromTerm(try child.process.wait(io));
+    status.duration = child.started.durationTo(clock.now(io));
 
-    return .fromTerm(try child.process.wait(io));
+    return status;
 }
 
 const Waited = std.process.Child.WaitError!std.process.Child.Term;

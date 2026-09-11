@@ -8,7 +8,7 @@ Ideas gathered from using `fb` as an agent, ordered by expected impact.
       after the exit code. Most runs are short or fail near the end.
 - [x] Print line and byte counts per file, and state when stderr is empty, so the
       agent knows whether to `cat` or `grep`.
-- [ ] Print the duration, to judge whether a timeout was reasonable.
+- [x] Print the duration, to judge whether a timeout was reasonable.
 - [x] `--json` summary line: paths, exit code, counts, duration.
 
 ## Predictable paths and cleanup

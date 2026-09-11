@@ -15,34 +15,50 @@ stdout: Stream,
 stderr: Stream,
 exit_code: u8,
 timed_out: bool = false,
+/// Time from spawn until the command was reaped.
+duration: std.Io.Duration = .zero,
 
 pub const Stream = struct {
     size: u64 = 0,
     lines: excerpt.Excerpt = .{},
 };
 
+/// Saved as the exit code, the timeout flag, and the duration in nanoseconds
+/// as a little-endian `u64`.
 pub const Status = struct {
     exit_code: u8,
     timed_out: bool,
+    duration: std.Io.Duration = .zero,
 
     const filename = "status";
+    const size = 2 + @sizeOf(u64);
 
     pub fn read(io: std.Io, directory: std.Io.Dir) !Status {
         const file = try directory.openFile(io, filename, .{});
         defer file.close(io);
 
-        var bytes: [3]u8 = undefined;
+        var bytes: [size + 1]u8 = undefined;
         const length = try file.readPositionalAll(io, &bytes, 0);
-        if (length != 2 or bytes[1] > 1) return error.InvalidRunStatus;
+        if (length != size or bytes[1] > 1) return error.InvalidRunStatus;
 
-        return .{ .exit_code = bytes[0], .timed_out = bytes[1] == 1 };
+        return .{
+            .exit_code = bytes[0],
+            .timed_out = bytes[1] == 1,
+            .duration = .fromNanoseconds(std.mem.readInt(u64, bytes[2..size], .little)),
+        };
     }
 
     pub fn save(status: Status, io: std.Io, directory: std.Io.Dir) !void {
         var file = try directory.createFileAtomic(io, filename, .{ .replace = true });
         defer file.deinit(io);
 
-        try file.file.writeStreamingAll(io, &.{ status.exit_code, @intFromBool(status.timed_out) });
+        var bytes: [size]u8 = undefined;
+        bytes[0] = status.exit_code;
+        bytes[1] = @intFromBool(status.timed_out);
+        // A negative duration cannot occur with a monotonic clock; clamp defensively.
+        const nanoseconds: u64 = @intCast(std.math.clamp(status.duration.toNanoseconds(), 0, std.math.maxInt(u64)));
+        std.mem.writeInt(u64, bytes[2..size], nanoseconds, .little);
+        try file.file.writeStreamingAll(io, &bytes);
         try file.replace(io);
     }
 
@@ -68,6 +84,7 @@ pub fn read(
         .stderr = .{ .lines = stderr_lines },
         .exit_code = status.exit_code,
         .timed_out = status.timed_out,
+        .duration = status.duration,
     };
 
     inline for (stream_names) |name| {
@@ -110,6 +127,7 @@ pub fn writeReport(output: Output, io: std.Io, directory: std.Io.Dir, style: Sty
 fn writeText(output: Output, io: std.Io, directory: std.Io.Dir, out: *std.Io.Writer) !void {
     try out.print("[fb exit={d}", .{output.exit_code});
     if (output.timed_out) try out.writeAll(" timed_out");
+    if (output.duration.toNanoseconds() > 0) try out.print(" time={f}", .{output.duration});
     try out.writeAll("]\n");
 
     inline for (stream_names) |name| {
@@ -172,6 +190,8 @@ fn writeJson(output: Output, io: std.Io, directory: std.Io.Dir, out: *std.Io.Wri
     try json.write(output.exit_code);
     try json.objectField("timed_out");
     try json.write(output.timed_out);
+    try json.objectField("duration_ns");
+    try json.write(output.duration.toNanoseconds());
     try json.endObject();
     try out.writeByte('\n');
 }
@@ -214,6 +234,7 @@ test "writeText formatting" {
         .stderr = .{ .size = 7, .lines = .{ .tail = 1 } },
         .exit_code = 0,
         .timed_out = false,
+        .duration = .fromNanoseconds(std.time.ns_per_s + 234 * std.time.ns_per_ms),
     };
 
     var out: std.Io.Writer.Allocating = .init(t.allocator);
@@ -222,7 +243,7 @@ test "writeText formatting" {
 
     var expected_buf: [512]u8 = undefined;
     const expected = try std.fmt.bufPrint(&expected_buf,
-        \\[fb exit=0]
+        \\[fb exit=0 time=1.234s]
         \\stdout (21 B): /test/run{c}stdout
         \\stderr (7 B): /test/run{c}stderr
         \\
@@ -254,6 +275,7 @@ test "writeText with timeout" {
         .stderr = .{ .size = 0 },
         .exit_code = 124,
         .timed_out = true,
+        .duration = .fromNanoseconds(30 * std.time.ns_per_s),
     };
 
     var out: std.Io.Writer.Allocating = .init(t.allocator);
@@ -262,7 +284,7 @@ test "writeText with timeout" {
 
     var expected_buf: [256]u8 = undefined;
     const expected = try std.fmt.bufPrint(&expected_buf,
-        \\[fb exit=124 timed_out]
+        \\[fb exit=124 timed_out time=30s]
         \\stdout (0 B): /test/run{c}stdout
         \\stderr (0 B): /test/run{c}stderr
         \\
