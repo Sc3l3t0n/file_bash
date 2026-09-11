@@ -22,6 +22,20 @@ The shell source is executed by `sh -c` on Linux/macOS and
 `cmd.exe /d /s /c` on Windows. Quote the entire command; a second command
 argument is an error. Standard input is inherited.
 
+Use `-C <dir>` (or `-C=<dir>`) to run the command in another working directory:
+
+```sh
+fb -C ./project 'zig build'
+FILE_BASH_CWD=./project fb 'zig build'
+```
+
+`-C` overrides `FILE_BASH_CWD`. An unset or empty environment value inherits
+fb's working directory. Relative paths resolve from where fb was invoked;
+paths containing spaces are supported when quoted. An empty `-C` is an argument
+error. The directory is opened before saving output, so a missing or inaccessible
+directory fails without running the command or overwriting a named run.
+This setting applies only to `run` and does not change where output is saved.
+
 Set `FILE_BASH_SHELL` to select another command interpreter. Supported values
 are `sh`, `bash`, `zsh`, `fish`, `nu`, `cmd`, `powershell`, and `pwsh`. For
 example:

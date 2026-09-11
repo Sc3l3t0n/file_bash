@@ -17,6 +17,7 @@ const usage =
     \\  -n, --name <name>        save under this name, overwriting previous output
     \\  --json                   print results as JSON (cannot be used with --async)
     \\  -a, --async               print the output paths before the command starts
+    \\  -C <dir>                 overrides working directory (default: FILE_BASH_CWD or current directory)
     \\  -t, --timeout <duration>  kill the command after the duration (30s, 5m, 2h)
     \\  -d, --head <n>            print the first n lines of stdout and stderr afterwards
     \\  -l, --tail <n>            print the last n lines of stdout and stderr afterwards
@@ -60,6 +61,19 @@ pub fn execute(
         try stdout.writeAll(usage);
         return 0;
     }
+
+    const cwd = if (dir.workingPath(parsed.cwd, environ)) |path|
+        std.Io.Dir.cwd().openDir(io, path, .{}) catch |err| {
+            try stderr.print("working directory '{s}' from '{s}': {s}\n", .{
+                path,
+                if (parsed.cwd != null) "-C" else "FILE_BASH_CWD",
+                if (err == error.FileNotFound) "does not exist" else @errorName(err),
+            });
+            return 1;
+        }
+    else
+        null;
+    defer if (cwd) |opened| opened.close(io);
 
     // Keep each run's files together and leave them available after exit.
     var random_name: [32]u8 = undefined;
@@ -118,6 +132,7 @@ pub fn execute(
 
     var child = try Child.spawn(io, arena, .{
         .argv = shell_argv.slice(),
+        .cwd = cwd,
         .environ = environ,
         .stdout = stdout_file,
         .stderr = stderr_file,

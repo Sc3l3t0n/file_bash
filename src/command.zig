@@ -25,7 +25,7 @@ pub const Command = enum {
         return switch (command) {
             .run => true,
             .last => switch (option) {
-                .async, .timeout, .name => false,
+                .async, .timeout, .name, .cwd => false,
                 else => true,
             },
             .clean, .install, .uninstall => false,
@@ -71,6 +71,7 @@ pub const Run = struct {
     source: []const u8,
     /// Borrowed output directory name; null generates a random name. Reuse overwrites saved output.
     name: ?[]const u8 = null,
+    cwd: ?[]const u8 = null,
     timeout: ?std.Io.Duration,
     /// Print the output paths before the command starts instead of after it exits.
     async: bool,
@@ -85,6 +86,7 @@ pub const Run = struct {
         MissingValue,
         InvalidTimeout,
         InvalidName,
+        InvalidDirectory,
         InvalidLineCount,
         ConflictingHeadFlags,
         ConflictingTailFlags,
@@ -109,6 +111,7 @@ pub const Run = struct {
                     try out.print("invalid run name '{s}'; use 1–64 ASCII letters, digits, hyphens, or underscores; last is reserved", .{diagnostic.value});
                     if (builtin.os.tag == .windows) try out.writeAll("; Windows device names are also reserved");
                 },
+                error.InvalidDirectory => try out.writeAll("working directory must not be empty"),
                 error.InvalidTimeout => try out.print("invalid timeout '{s}' for '{s}'; use a positive integer with ms, s, m, or h (for example, 30s); bare integers mean seconds; maximum count is 4294967295", .{ diagnostic.value, diagnostic.argument }),
                 error.InvalidLineCount => try out.print("invalid line count '{s}' for '{s}'; expected an integer from 1 to 4294967295", .{ diagnostic.value, diagnostic.argument }),
                 error.ConflictingHeadFlags, error.ConflictingTailFlags => {
@@ -127,6 +130,7 @@ pub const Run = struct {
         help,
         timeout,
         name,
+        cwd,
         async,
         json,
         head,
@@ -139,6 +143,7 @@ pub const Run = struct {
         const names = std.StaticStringMap(Option).initComptime(.{
             .{ "--name", .name },
             .{ "-n", .name },
+            .{ "-C", .cwd },
             .{ "-t", .timeout },
             .{ "--timeout", .timeout },
             .{ "-a", .async },
@@ -172,7 +177,7 @@ pub const Run = struct {
         diagnostic: ?*Diagnostic = null,
     };
 
-    /// Parses `run` arguments, borrowing their slices and optionally recording diagnostics.
+    /// Parses run arguments, borrowing their slices and optionally recording diagnostics.
     pub fn parse(args: []const [:0]const u8, opts: ParseOptions) Error!Run {
         return parseFor(.run, args, opts);
     }
@@ -227,6 +232,10 @@ pub const Run = struct {
                 .name => {
                     if (!dir.validRunName(value)) return error.InvalidName;
                     run.name = value;
+                },
+                .cwd => {
+                    if (value.len == 0) return error.InvalidDirectory;
+                    run.cwd = value;
                 },
                 .timeout => run.timeout = try parseTimeout(value),
                 .async => run.async = true,
@@ -629,4 +638,16 @@ test "named runs accept portable names and reject paths and reserved names" {
         }
     }
     try t.expectEqual(null, (try Run.parse(&.{"true"}, .{})).name);
+}
+
+test "working directory arguments" {
+    const t = std.testing;
+    const parsed = try Run.parse(&.{ "-C", ".", "pwd" }, .{});
+    try t.expectEqualStrings(".", parsed.cwd.?);
+    const equals = try Run.parse(&.{ "-C=.", "pwd" }, .{});
+    try t.expectEqualStrings(".", equals.cwd.?);
+    try t.expectEqual(null, (try Run.parse(&.{"pwd"}, .{})).cwd);
+    try t.expectError(error.MissingValue, Run.parse(&.{"-C"}, .{}));
+    try t.expectError(error.InvalidDirectory, Run.parse(&.{ "-C=", "pwd" }, .{}));
+    try t.expectError(error.UnknownFlag, Run.parseLast(&.{ "-C", "relative" }, .{}));
 }

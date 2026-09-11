@@ -32,7 +32,7 @@ Ideas gathered from using `fb` as an agent, ordered by expected impact.
       an agent silently.
 - [ ] Per-file size cap with a truncation notice, so a looping process cannot fill
       the disk before the timeout fires.
-- [ ] `-C <dir>`: set the working directory instead of `cd` in the command.
+- [x] `-C <dir>`: set the working directory instead of `cd` in the command.
 
 ## Optional
 

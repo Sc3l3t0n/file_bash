@@ -8,6 +8,8 @@ timeout: ?std.Io.Duration,
 
 pub const Options = struct {
     argv: []const []const u8,
+    /// Borrowed directory handle; the caller retains ownership.
+    cwd: ?std.Io.Dir = null,
     /// Inherited by the child after the non-interactive overrides are applied.
     environ: *const std.process.Environ.Map,
     stdout: std.Io.File,
@@ -24,6 +26,7 @@ pub fn spawn(io: std.Io, arena: std.mem.Allocator, options: Options) !Child {
     return .{
         .process = try std.process.spawn(io, .{
             .argv = options.argv,
+            .cwd = if (options.cwd) |cwd| .{ .dir = cwd } else .inherit,
             .environ_map = &environ,
             .stdout = .{ .file = options.stdout },
             .stderr = .{ .file = options.stderr },

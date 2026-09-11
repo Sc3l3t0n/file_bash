@@ -112,3 +112,23 @@ pub fn validRunName(name: []const u8) bool {
     }
     return true;
 }
+
+/// Borrows the CLI override or environment default; relative paths use fb's cwd.
+pub fn workingPath(override: ?[]const u8, environ: *const std.process.Environ.Map) ?[]const u8 {
+    if (override) |path| return path;
+    const path = environ.get("FILE_BASH_CWD") orelse return null;
+    return if (path.len == 0) null else path;
+}
+
+test "working directory environment and CLI precedence" {
+    const t = std.testing;
+    var environ: std.process.Environ.Map = .init(t.allocator);
+    defer environ.deinit();
+
+    try t.expectEqual(null, workingPath(null, &environ));
+    try environ.put("FILE_BASH_CWD", "");
+    try t.expectEqual(null, workingPath(null, &environ));
+    try environ.put("FILE_BASH_CWD", "environment directory");
+    try t.expectEqualStrings("environment directory", workingPath(null, &environ).?);
+    try t.expectEqualStrings("cli directory", workingPath("cli directory", &environ).?);
+}
