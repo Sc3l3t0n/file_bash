@@ -112,7 +112,6 @@ test "last reads output with new excerpt options and clean removes the last poin
     inline for (.{ Output.Style.text, Output.Style.json }) |style| {
         var expected: std.Io.Writer.Allocating = .init(arena);
         var actual: std.Io.Writer.Allocating = .init(arena);
-        if (style == .text) try Output.writePaths(output_path, &expected.writer);
         try output.writeReport(io, directory, style, &expected.writer);
         const args: []const [:0]const u8 = if (style == .json) &.{ "--json", "--head", "1" } else &.{ "--head", "1" };
         try t.expectEqual(124, try execute(io, arena, args, &environ, &actual.writer, &err.writer));

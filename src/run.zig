@@ -137,7 +137,6 @@ pub fn execute(
 
     try (Output.Status{ .exit_code = status.code, .timed_out = status.timed_out }).save(io, output_dir);
     const output = try Output.read(io, output_dir, output_path, parsed.stdout, parsed.stderr);
-    if (parsed.style == .text and !parsed.async) try Output.writePaths(output_path, stdout);
     try output.writeReport(io, output_dir, parsed.style, stdout);
 
     return status.code;

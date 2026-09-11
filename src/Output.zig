@@ -86,6 +86,19 @@ pub fn writePaths(path: []const u8, out: *std.Io.Writer) !void {
     }
 }
 
+pub fn writeSize(size: u64, out: *std.Io.Writer) !void {
+    if (size < 1024) return out.print("{d} B", .{size});
+
+    const units = [_][]const u8{ "KB", "MB", "GB", "TB" };
+    var unit_idx: usize = 0;
+    var n = size;
+    while (unit_idx + 1 < units.len and n >= 1024 * 1024) : (unit_idx += 1) {
+        n /= 1024;
+    }
+    const rem = (n % 1024) * 10 / 1024;
+    return out.print("{d}.{d} {s}", .{ n / 1024, rem, units[unit_idx] });
+}
+
 /// Writes a complete report. Early async paths are printed separately.
 pub fn writeReport(output: Output, io: std.Io, directory: std.Io.Dir, style: Style, out: *std.Io.Writer) !void {
     switch (style) {
@@ -94,13 +107,16 @@ pub fn writeReport(output: Output, io: std.Io, directory: std.Io.Dir, style: Sty
     }
 }
 
-fn hasExcerpt(output: Output) bool {
-    return !output.stdout.lines.isEmpty() or !output.stderr.lines.isEmpty();
-}
-
 fn writeText(output: Output, io: std.Io, directory: std.Io.Dir, out: *std.Io.Writer) !void {
+    try out.print("[fb exit={d}", .{output.exit_code});
+    if (output.timed_out) try out.writeAll(" timed_out");
+    try out.writeAll("]\n");
+
     inline for (stream_names) |name| {
-        try out.print(name ++ " size: {d} bytes\n", .{@field(output, name).size});
+        const stream = @field(output, name);
+        try out.print(name ++ " (", .{});
+        try writeSize(stream.size, out);
+        try out.print("): {s}{c}" ++ name ++ "\n", .{ output.path, std.fs.path.sep });
     }
 
     inline for (stream_names) |name| {
@@ -112,9 +128,6 @@ fn writeText(output: Output, io: std.Io, directory: std.Io.Dir, out: *std.Io.Wri
             try excerpt.write(io, file, stream.lines, name, out);
         }
     }
-    if (output.hasExcerpt()) try out.writeAll("--- end ---\n");
-
-    try out.print("exit code: {d}\n", .{output.exit_code});
 }
 
 fn writeJson(output: Output, io: std.Io, directory: std.Io.Dir, out: *std.Io.Writer) !void {
@@ -161,6 +174,100 @@ fn writeJson(output: Output, io: std.Io, directory: std.Io.Dir, out: *std.Io.Wri
     try json.write(output.timed_out);
     try json.endObject();
     try out.writeByte('\n');
+}
+
+test "writeSize" {
+    const t = std.testing;
+    const cases = [_]struct { size: u64, expected: []const u8 }{
+        .{ .size = 0, .expected = "0 B" },
+        .{ .size = 1, .expected = "1 B" },
+        .{ .size = 340, .expected = "340 B" },
+        .{ .size = 1023, .expected = "1023 B" },
+        .{ .size = 1024, .expected = "1.0 KB" },
+        .{ .size = 1536, .expected = "1.5 KB" },
+        .{ .size = 4520, .expected = "4.4 KB" },
+        .{ .size = 1048575, .expected = "1023.9 KB" },
+        .{ .size = 1048576, .expected = "1.0 MB" },
+        .{ .size = 1572864, .expected = "1.5 MB" },
+    };
+
+    for (cases) |c| {
+        var out: std.Io.Writer.Allocating = .init(t.allocator);
+        defer out.deinit();
+        try writeSize(c.size, &out.writer);
+        try t.expectEqualStrings(c.expected, out.written());
+    }
+}
+
+test "writeText formatting" {
+    const t = std.testing;
+    const io = t.io;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "stdout", .data = "line 1\nline 2\nline 3\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "stderr", .data = "warn 1\n" });
+
+    const output: Output = .{
+        .path = "/test/run",
+        .stdout = .{ .size = 21, .lines = .{ .tail = 2 } },
+        .stderr = .{ .size = 7, .lines = .{ .tail = 1 } },
+        .exit_code = 0,
+        .timed_out = false,
+    };
+
+    var out: std.Io.Writer.Allocating = .init(t.allocator);
+    defer out.deinit();
+    try output.writeText(io, tmp.dir, &out.writer);
+
+    var expected_buf: [512]u8 = undefined;
+    const expected = try std.fmt.bufPrint(&expected_buf,
+        \\[fb exit=0]
+        \\stdout (21 B): /test/run{c}stdout
+        \\stderr (7 B): /test/run{c}stderr
+        \\
+        \\>>> stdout tail 2
+        \\line 2
+        \\line 3
+        \\<<<
+        \\
+        \\>>> stderr tail 1
+        \\warn 1
+        \\<<<
+        \\
+    , .{ std.fs.path.sep, std.fs.path.sep });
+    try t.expectEqualStrings(expected, out.written());
+}
+
+test "writeText with timeout" {
+    const t = std.testing;
+    const io = t.io;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "stdout", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "stderr", .data = "" });
+
+    const output: Output = .{
+        .path = "/test/run",
+        .stdout = .{ .size = 0 },
+        .stderr = .{ .size = 0 },
+        .exit_code = 124,
+        .timed_out = true,
+    };
+
+    var out: std.Io.Writer.Allocating = .init(t.allocator);
+    defer out.deinit();
+    try output.writeText(io, tmp.dir, &out.writer);
+
+    var expected_buf: [256]u8 = undefined;
+    const expected = try std.fmt.bufPrint(&expected_buf,
+        \\[fb exit=124 timed_out]
+        \\stdout (0 B): /test/run{c}stdout
+        \\stderr (0 B): /test/run{c}stderr
+        \\
+    , .{ std.fs.path.sep, std.fs.path.sep });
+    try t.expectEqualStrings(expected, out.written());
 }
 
 test {

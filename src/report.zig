@@ -33,7 +33,6 @@ pub fn write(
         else => return err,
     };
 
-    if (options.style == .text) try Output.writePaths(path, stdout);
     try output.writeReport(io, directory, options.style, stdout);
 
     return output.exit_code;

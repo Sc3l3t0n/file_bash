@@ -15,12 +15,14 @@ const chunk_size = 4096;
 /// Writes the requested head and tail of `file`, each under a labeled marker.
 pub fn write(io: std.Io, file: std.Io.File, excerpt: Excerpt, label: []const u8, out: *std.Io.Writer) !void {
     if (excerpt.head) |count| {
-        try out.print("--- {s} head (n = {d}) ---\n", .{ label, count });
+        try out.print("\n>>> {s} head {d}\n", .{ label, count });
         try head(io, file, count, out);
+        try out.writeAll("<<<\n");
     }
     if (excerpt.tail) |count| {
-        try out.print("--- {s} tail (n = {d}) ---\n", .{ label, count });
+        try out.print("\n>>> {s} tail {d}\n", .{ label, count });
         try tail(io, file, count, out);
+        try out.writeAll("<<<\n");
     }
 }
 
@@ -108,23 +110,23 @@ fn expect(data: []const u8, excerpt: Excerpt, expected: []const u8) !void {
 }
 
 test "head" {
-    try expect("a\nb\nc\n", .{ .head = 2 }, "--- x head (n = 2) ---\na\nb\n");
-    try expect("a\nb\nc\n", .{ .head = 5 }, "--- x head (n = 5) ---\na\nb\nc\n");
-    try expect("a\nb", .{ .head = 5 }, "--- x head (n = 5) ---\na\nb\n");
-    try expect("", .{ .head = 1 }, "--- x head (n = 1) ---\n");
+    try expect("a\nb\nc\n", .{ .head = 2 }, "\n>>> x head 2\na\nb\n<<<\n");
+    try expect("a\nb\nc\n", .{ .head = 5 }, "\n>>> x head 5\na\nb\nc\n<<<\n");
+    try expect("a\nb", .{ .head = 5 }, "\n>>> x head 5\na\nb\n<<<\n");
+    try expect("", .{ .head = 1 }, "\n>>> x head 1\n<<<\n");
 }
 
 test "tail" {
-    try expect("a\nb\nc\n", .{ .tail = 2 }, "--- x tail (n = 2) ---\nb\nc\n");
-    try expect("a\nb\nc", .{ .tail = 2 }, "--- x tail (n = 2) ---\nb\nc\n");
-    try expect("a\nb\nc\n", .{ .tail = 5 }, "--- x tail (n = 5) ---\na\nb\nc\n");
-    try expect("", .{ .tail = 1 }, "--- x tail (n = 1) ---\n");
-    try expect("a\nb\nc\n", .{ .head = 1, .tail = 1 }, "--- x head (n = 1) ---\na\n--- x tail (n = 1) ---\nc\n");
+    try expect("a\nb\nc\n", .{ .tail = 2 }, "\n>>> x tail 2\nb\nc\n<<<\n");
+    try expect("a\nb\nc", .{ .tail = 2 }, "\n>>> x tail 2\nb\nc\n<<<\n");
+    try expect("a\nb\nc\n", .{ .tail = 5 }, "\n>>> x tail 5\na\nb\nc\n<<<\n");
+    try expect("", .{ .tail = 1 }, "\n>>> x tail 1\n<<<\n");
+    try expect("a\nb\nc\n", .{ .head = 1, .tail = 1 }, "\n>>> x head 1\na\n<<<\n\n>>> x tail 1\nc\n<<<\n");
 }
 
 test "tail across chunks" {
     const line = "0123456789" ** 10 ++ "\n";
     const data = line ** 100;
-    try expect(data, .{ .tail = 3 }, "--- x tail (n = 3) ---\n" ++ line ** 3);
-    try expect(data, .{ .head = 3 }, "--- x head (n = 3) ---\n" ++ line ** 3);
+    try expect(data, .{ .tail = 3 }, "\n>>> x tail 3\n" ++ line ** 3 ++ "<<<\n");
+    try expect(data, .{ .head = 3 }, "\n>>> x head 3\n" ++ line ** 3 ++ "<<<\n");
 }
