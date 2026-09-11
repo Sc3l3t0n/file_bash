@@ -7,6 +7,7 @@ const Output = @import("Output.zig");
 const command = @import("command.zig");
 const last = @import("last.zig");
 const limit = @import("limit.zig");
+const Lock = @import("lock.zig").Lock;
 
 const usage =
     \\Usage: fb [run] [options] '<command>'
@@ -15,6 +16,7 @@ const usage =
     \\
     \\Options:
     \\  -n, --name <name>         save under this name, overwriting previous output
+    \\  --overwrite               replace a named run whose lock is known to be stale (use with care)
     \\  --json                    print results as JSON (cannot be used with --async)
     \\  -a, --async               print the output paths before the command starts
     \\  -C <dir>                  working directory (default: FILE_BASH_CWD or current directory)
@@ -111,6 +113,26 @@ pub fn execute(
     var output_dir = try parent_dir.openDir(io, name, .{ .follow_symlinks = false });
     defer output_dir.close(io);
 
+    // A leftover lock means the previous run of this name has not finished.
+    if (parsed.name != null and !parsed.overwrite) {
+        const lock = Lock.read(io, output_dir) catch |err| switch (err) {
+            error.InvalidRunLock => {
+                try stderr.print(
+                    "run '{s}' has an unreadable lock file and may still be running; wait for it to finish, or pass --overwrite only once you are sure the lock is stale (fb was killed or the process is gone)\n",
+                    .{name},
+                );
+                return 1;
+            },
+            else => return err,
+        };
+        if (lock) |held| {
+            try held.writeConflict(io, name, stderr);
+            return 1;
+        }
+    }
+    try Lock.write(io, output_dir);
+    defer Lock.remove(io, output_dir) catch {};
+
     try Output.Status.clear(io, output_dir);
     const stdout_file = try output_dir.createFile(io, "stdout", .{});
     defer stdout_file.close(io);
@@ -170,4 +192,5 @@ test {
     _ = dir;
     _ = shell;
     _ = limit;
+    _ = @import("lock.zig");
 }

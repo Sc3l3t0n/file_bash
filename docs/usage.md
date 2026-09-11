@@ -41,8 +41,16 @@ fb run --name build 'zig build'
 
 Names contain 1–64 ASCII letters, digits, hyphens, or underscores. `last` is
 reserved case-insensitively. Windows binaries also reserve device names.
-Reusing a name overwrites its stdout, stderr, and completion status. Wait for a
-named run to finish before reusing its name. Unnamed runs use random IDs.
+Reusing a name overwrites its stdout, stderr, and completion status. While a
+command runs, its directory holds a `lock` file containing the Unix seconds at
+which it started; the file is removed when the run finishes. Reusing a name
+whose lock still exists fails with exit code 1 and reports how long ago the
+lock was written, so a still-running command is not clobbered. Wait for the
+run to finish. Use `--overwrite` only after confirming the lock is stale, for
+example because `fb` itself was killed or the process no longer exists; an
+overwrite while the old command is still writing corrupts its output and lets
+the old run remove the new lock when it exits. `--overwrite` requires `--name`.
+Unnamed runs use random IDs.
 `fb last`, `fb print`, and `fb clean` also work with named runs.
 
 Run `fb last` to report the latest run's output again without rerunning the

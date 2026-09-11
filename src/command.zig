@@ -27,7 +27,7 @@ pub const Command = enum {
         return switch (command) {
             .run => true,
             .last, .print => switch (option) {
-                .async, .timeout, .unlimited, .name, .cwd => false,
+                .async, .timeout, .unlimited, .name, .cwd, .overwrite => false,
                 else => true,
             },
             .clean, .install, .uninstall => false,
@@ -79,6 +79,8 @@ pub const Run = struct {
     async: bool = false,
     /// Never kill the command for oversized output.
     unlimited: bool = false,
+    /// Reuse a named directory even when a lock says its previous run may still be running.
+    overwrite: bool = false,
     /// Lines of the stdout file to print after the command exits.
     stdout: Excerpt = .{},
     /// Lines of the stderr file to print after the command exits.
@@ -86,6 +88,7 @@ pub const Run = struct {
 
     pub const Error = error{
         ConflictingOutputFlags,
+        OverwriteRequiresName,
         MissingCommand,
         MissingRunId,
         MissingValue,
@@ -110,6 +113,7 @@ pub const Run = struct {
         pub fn write(diagnostic: Diagnostic, err: Error, out: *std.Io.Writer) !void {
             switch (err) {
                 error.ConflictingOutputFlags => try out.writeAll("--async and --json cannot be used together"),
+                error.OverwriteRequiresName => try out.writeAll("--overwrite requires --name; unnamed runs never reuse a directory"),
                 error.MissingCommand => try out.writeAll(
                     "missing command; pass one quoted shell command after the options",
                 ),
@@ -165,6 +169,7 @@ pub const Run = struct {
         cwd,
         async,
         unlimited,
+        overwrite,
         json,
         head,
         tail,
@@ -183,6 +188,7 @@ pub const Run = struct {
             .{ "--async", .async },
             .{ "-u", .unlimited },
             .{ "--unlimited", .unlimited },
+            .{ "--overwrite", .overwrite },
             .{ "--json", .json },
             .{ "-h", .help },
             .{ "--help", .help },
@@ -202,7 +208,7 @@ pub const Run = struct {
 
         fn takesValue(option: Option) bool {
             return switch (option) {
-                .async, .unlimited, .help, .json => false,
+                .async, .unlimited, .overwrite, .help, .json => false,
                 else => true,
             };
         }
@@ -304,6 +310,7 @@ pub const Run = struct {
                 .timeout => run.timeout = try parseTimeout(value),
                 .async => run.async = true,
                 .unlimited => run.unlimited = true,
+                .overwrite => run.overwrite = true,
                 .json => run.style = .json,
                 inline .head, .tail, .out_head, .out_tail, .err_head, .err_tail => |selected| {
                     const lines = comptime selected.lines().?;
@@ -324,6 +331,7 @@ pub const Run = struct {
         }
 
         if (run.async and run.style == .json) return error.ConflictingOutputFlags;
+        if (run.overwrite and run.name == null) return error.OverwriteRequiresName;
 
         switch (command) {
             .last => {
@@ -713,6 +721,19 @@ test "working directory arguments" {
     try t.expectError(error.MissingValue, Run.parse(.run, &.{"-C"}, .{}));
     try t.expectError(error.InvalidDirectory, Run.parse(.run, &.{ "-C=", "pwd" }, .{}));
     try t.expectError(error.UnknownFlag, Run.parse(.last, &.{ "-C", "relative" }, .{}));
+}
+
+test "overwrite flag requires a name and is rejected by last and print" {
+    const t = std.testing;
+
+    try t.expectEqual(false, (try Run.parse(.run, &.{ "-n", "build", "true" }, .{})).overwrite);
+    const forced = try Run.parse(.run, &.{ "--overwrite", "--name=build", "true" }, .{});
+    try t.expectEqual(true, forced.overwrite);
+    try t.expectEqualStrings("build", forced.name.?);
+    try t.expectError(error.OverwriteRequiresName, Run.parse(.run, &.{ "--overwrite", "true" }, .{}));
+    try t.expectError(error.UnexpectedValue, Run.parse(.run, &.{ "--overwrite=1", "-n", "build", "true" }, .{}));
+    try t.expectError(error.UnknownFlag, Run.parse(.last, &.{"--overwrite"}, .{}));
+    try t.expectError(error.UnknownFlag, Run.parse(.print, &.{ "--overwrite", "build" }, .{}));
 }
 
 test "unlimited output size flag" {
