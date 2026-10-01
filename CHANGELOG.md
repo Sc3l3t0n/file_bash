@@ -16,6 +16,9 @@ All notable changes to this project are documented here. The format follows
 ### Changed
 
 - `fb install` and `fb uninstall` report the full path of the edited file.
+- Installed agent instructions clarify that options precede the quoted command,
+  show `fb run -l 20 -t 30s 'zig build'`, and document `fb last [options]` and
+  `fb print [options] <id>`.
 
 ## [0.1.0] - 2026-09-11
 

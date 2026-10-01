@@ -47,16 +47,17 @@ pub const Result = enum { added, updated, removed, unchanged };
 const start = "<!-- fb:begin -->";
 const end = "<!-- fb:end -->";
 const content =
-    \\Run noisy or long shell commands (builds, tests, logs) as `fb run '<command>'` with the
-    \\whole command quoted. fb writes stdout and stderr to files and prints their paths, sizes,
-    \\and the exit code; read the files with grep, head, or tail instead of dumping them.
+    \\Run noisy or long shell commands (builds, tests, logs) as `fb run [options] '<command>'`.
+    \\Put all fb options before the single-quoted shell command, for example
+    \\`fb run -l 20 -t 30s 'zig build'`. fb writes stdout and stderr to files and prints their
+    \\paths, sizes, and the exit code; read the files with grep, head, or tail instead of dumping them.
     \\Add `-l <n>` to print the last n lines of each file inline, `-t <duration>` (30s, 5m) to
     \\kill a hanging command (exit 124), `-a` to print the paths before the command starts so
     \\the files can be followed while it runs, and `--json` for a machine-readable report.
     \\A command whose stdout or stderr file exceeds 256M is killed (exit 153); pass `-u` when
     \\huge output is expected and must not be interrupted.
-    \\`fb last` and `fb print <id>` re-report a saved run without rerunning it; `-n <name>`
-    \\gives a run a stable ID and path. Run `fb run --help`, `fb last --help`, or
+    \\`fb last [options]` and `fb print [options] <id>` re-report a saved run without rerunning it;
+    \\`-n <name>` gives a run a stable ID and path. Run `fb run --help`, `fb last --help`, or
     \\`fb print --help` for all options.
 ;
 
