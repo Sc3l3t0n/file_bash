@@ -82,7 +82,7 @@ pub const Outputs = struct {
 pub const Access = enum { open, create };
 
 /// Opens this user's output directory under the temporary directory, creating it
-/// for `.create`. Returns null for `.open` when no run has created it yet.
+/// for `.create`. Returns null only for `.open` when no run has created it yet.
 /// Unix names include the effective user ID because temporary directories such as
 /// /tmp are shared; Windows %TMP% is already per user.
 pub fn openOutputs(
@@ -104,10 +104,10 @@ pub fn openOutputs(
         else => return err,
     };
 
-    // A symlink or file in place of the directory was not created by fb.
+    // A symlink, a file, or a directory fb cannot open was not created by fb.
     var parent = temp.openDir(io, name, .{ .iterate = true, .follow_symlinks = false }) catch |err| switch (err) {
-        error.FileNotFound => return null,
-        error.SymLinkLoop, error.NotDir => return error.OutputDirectoryNotPrivate,
+        error.FileNotFound => return if (access == .open) null else err,
+        error.SymLinkLoop, error.NotDir, error.AccessDenied, error.PermissionDenied => return error.OutputDirectoryNotPrivate,
         else => return err,
     };
     errdefer parent.close(io);
@@ -169,6 +169,8 @@ test "output directory is per user and must stay private" {
 
     try tmp.dir.setFilePermissions(io, name, .fromMode(0o755), .{});
     try t.expectError(error.OutputDirectoryNotPrivate, openOutputs(io, arena, &environ, .create));
+    try tmp.dir.setFilePermissions(io, name, .fromMode(0o070), .{});
+    try t.expectError(error.OutputDirectoryNotPrivate, openOutputs(io, arena, &environ, .open));
 
     try tmp.dir.deleteDir(io, name);
     try tmp.dir.symLink(io, ".", name, .{ .is_directory = true });
