@@ -20,6 +20,12 @@ All notable changes to this project are documented here. The format follows
   show `fb run -l 20 -t 30s 'zig build'`, and document `fb last [options]` and
   `fb print [options] <id>`.
 
+### Fixed
+
+- Commands read end-of-file from standard input instead of failing with
+  `Bad file descriptor`. Standard input is now the null device rather than a
+  closed descriptor, and the usage docs no longer claim it is inherited.
+
 ## [0.1.0] - 2026-09-11
 
 First usable release. `fb` runs a shell command, writes stdout and stderr to

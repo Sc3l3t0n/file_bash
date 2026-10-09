@@ -39,7 +39,8 @@ pub fn spawn(io: std.Io, arena: std.mem.Allocator, options: Options) !Child {
         .environ_map = &environ,
         .stdout = .{ .file = options.stdout },
         .stderr = .{ .file = options.stderr },
-        .stdin = .close,
+        // The null device gives commands that read stdin end-of-file.
+        .stdin = .ignore,
         // A bounded run leads its own process group so a kill reaches the
         // whole command tree; without a bound, signals keep reaching the
         // child.
@@ -260,4 +261,36 @@ test "child environment is non-interactive" {
     for (overrides) |override| {
         try t.expectEqualStrings(override.value, child_environ.get(override.key).?);
     }
+}
+
+test "child reads end-of-file from standard input" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const t = std.testing;
+    const io = t.io;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const stdout = try tmp.dir.createFile(io, "stdout", .{});
+    defer stdout.close(io);
+    const stderr = try tmp.dir.createFile(io, "stderr", .{});
+    defer stderr.close(io);
+    const environ: std.process.Environ.Map = .init(arena);
+
+    // `read` reports a bad descriptor on stderr when stdin is closed.
+    var child = try spawn(io, arena, .{
+        .argv = &.{ "/bin/sh", "-c", "read -r line" },
+        .environ = &environ,
+        .stdout = stdout,
+        .stderr = stderr,
+        .timeout = null,
+        .max_size = null,
+    });
+    const status = try child.wait(io);
+
+    try t.expectEqual(1, status.code);
+    try t.expectEqual(0, (try stderr.stat(io)).size);
 }
