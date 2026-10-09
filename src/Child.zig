@@ -83,7 +83,7 @@ pub const Status = struct {
         return .{
             .code = switch (term) {
                 .exited => |code| code,
-                .signal, .stopped => |signal| @intCast(@min(255, 128 + @as(u32, @intFromEnum(signal)))),
+                .signal, .stopped => |signal| @intCast(@min(255, 128 + @as(u32, @backingInt(signal)))),
                 .unknown => 1,
             },
         };
@@ -91,8 +91,8 @@ pub const Status = struct {
 
     fn fromKill(kill: Kill) Status {
         return switch (kill) {
-            .timeout => .{ .code = @intFromEnum(KillCode.timeout), .timed_out = true },
-            .oversized => |stream| .{ .code = @intFromEnum(KillCode.oversized), .oversized = stream },
+            .timeout => .{ .code = @backingInt(KillCode.timeout), .timed_out = true },
+            .oversized => |stream| .{ .code = @backingInt(KillCode.oversized), .oversized = stream },
         };
     }
 };
@@ -230,7 +230,7 @@ fn nonInteractive(
 }
 
 /// Exit status reported for a child that fb terminated on Windows.
-const terminated_exit_status: std.os.windows.NTSTATUS = @enumFromInt(1);
+const terminated_exit_status: std.os.windows.NTSTATUS = @fromBackingInt(1);
 
 /// Requests immediate termination without reaping the child. On POSIX the
 /// child's whole process group is signalled, so descendants die with it.

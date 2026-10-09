@@ -22,6 +22,7 @@ All notable changes to this project are documented here. The format follows
 - Installed agent instructions clarify that options precede the quoted command,
   show `fb run -l 20 -t 30s 'zig build'`, and document `fb last [options]` and
   `fb print [options] <id>`.
+- Building `fb` now requires Zig 0.17.0. The Nix flake pins Zig 0.17.0.
 
 ### Fixed
 

@@ -43,7 +43,7 @@ pub const Status = struct {
 
     const filename = "status";
     const size = 3 + @sizeOf(u64);
-    const stream_count = @typeInfo(StreamType).@"enum".fields.len;
+    const stream_count = @typeInfo(StreamType).@"enum".field_names.len;
 
     pub fn read(io: std.Io, directory: std.Io.Dir) !Status {
         const file = try directory.openFile(io, filename, .{});
@@ -56,7 +56,7 @@ pub const Status = struct {
         return .{
             .exit_code = bytes[0],
             .timed_out = bytes[1] == 1,
-            .oversized = if (bytes[2] == 0) null else @enumFromInt(bytes[2] - 1),
+            .oversized = if (bytes[2] == 0) null else @fromBackingInt(@intCast(bytes[2] - 1)),
             .duration = .fromNanoseconds(std.mem.readInt(u64, bytes[3..size], .little)),
         };
     }
@@ -68,7 +68,7 @@ pub const Status = struct {
         var bytes: [size]u8 = undefined;
         bytes[0] = status.exit_code;
         bytes[1] = @intFromBool(status.timed_out);
-        bytes[2] = if (status.oversized) |stream| @intFromEnum(stream) + 1 else 0;
+        bytes[2] = if (status.oversized) |stream| @backingInt(stream) + 1 else 0;
         // A negative duration cannot occur with a monotonic clock; clamp defensively.
         const nanoseconds: u64 = @intCast(std.math.clamp(status.duration.toNanoseconds(), 0, std.math.maxInt(u64)));
         std.mem.writeInt(u64, bytes[3..size], nanoseconds, .little);
@@ -422,7 +422,7 @@ test "status round-trips the oversized stream" {
         try t.expectEqual(saved, try Status.read(io, tmp.dir));
     }
 
-    try tmp.dir.writeFile(io, .{ .sub_path = "status", .data = &([_]u8{ 0, 0, 3 } ++ [_]u8{0} ** 8) });
+    try tmp.dir.writeFile(io, .{ .sub_path = "status", .data = &([_]u8{ 0, 0, 3 } ++ @as([8]u8, @splat(0))) });
     try t.expectError(error.InvalidRunStatus, Status.read(io, tmp.dir));
 }
 

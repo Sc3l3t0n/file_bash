@@ -698,7 +698,7 @@ test "named runs accept portable names and reject paths and reserved names" {
         try t.expectError(error.MissingValue, Run.parse(.run, &.{flag}, .{}));
         try t.expectError(error.UnknownFlag, Run.parse(.last, &.{ flag, "build" }, .{}));
     }
-    inline for (.{ "", ".", "..", "../build", "a/b", "a\\b", "C:build", "last", "LAST", "build.", "two words", "x" ** 65 }) |name| {
+    inline for (.{ "", ".", "..", "../build", "a/b", "a\\b", "C:build", "last", "LAST", "build.", "two words", &@as([65:0]u8, @splat('x')) }) |name| {
         try t.expectError(error.InvalidName, Run.parse(.run, &.{ "--name", name, "true" }, .{}));
     }
     inline for (.{ "CON", "NUL", "com1", "LPT9" }) |name| {
