@@ -9,6 +9,9 @@ pub const Style = enum { text, json };
 /// Output file names; each matches the `Output` field describing it.
 pub const stream_names = [_][]const u8{ "stdout", "stderr" };
 
+/// Holds the shell source exactly as passed to `fb run`.
+pub const command_filename = "command";
+
 /// Identifies one of the output files; the saved status stores it as the tag plus one.
 pub const StreamType = enum(u8) { stdout, stderr };
 
@@ -77,6 +80,11 @@ pub const Status = struct {
         file.close(io);
     }
 };
+
+/// Saves the shell source so later reports can show which command ran.
+pub fn saveCommand(io: std.Io, directory: std.Io.Dir, source: []const u8) !void {
+    try directory.writeFile(io, .{ .sub_path = command_filename, .data = source });
+}
 
 /// Rebuild the report from the run's files using this invocation's excerpt options.
 pub fn read(
@@ -162,6 +170,28 @@ fn writeText(output: Output, io: std.Io, directory: std.Io.Dir, out: *std.Io.Wri
 fn writeJson(output: Output, io: std.Io, directory: std.Io.Dir, out: *std.Io.Writer) !void {
     var json: std.json.Stringify = .{ .writer = out };
     try json.beginObject();
+
+    // Runs saved before the command was recorded report null.
+    try json.objectField("command");
+    if (directory.openFile(io, command_filename, .{})) |file| {
+        defer file.close(io);
+
+        try json.beginWriteRaw();
+        var escaped = try JsonString.begin(out);
+        var buffer: [excerpt.chunk_size]u8 = undefined;
+        var offset: u64 = 0;
+        while (true) {
+            const length = try file.readPositionalAll(io, &buffer, offset);
+            if (length == 0) break;
+            try escaped.writer.writeAll(buffer[0..length]);
+            offset += length;
+        }
+        try escaped.finish();
+        json.endWriteRaw();
+    } else |err| switch (err) {
+        error.FileNotFound => try json.write(null),
+        else => return err,
+    }
 
     inline for (stream_names) |name| {
         const stream = @field(output, name);
@@ -357,4 +387,36 @@ test "status round-trips the oversized stream" {
 
     try tmp.dir.writeFile(io, .{ .sub_path = "status", .data = &([_]u8{ 0, 0, 3 } ++ [_]u8{0} ** 8) });
     try t.expectError(error.InvalidRunStatus, Status.read(io, tmp.dir));
+}
+
+test "writeJson reports the saved command" {
+    const t = std.testing;
+    const io = t.io;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "stdout", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "stderr", .data = "" });
+
+    const output: Output = .{
+        .path = "/test/run",
+        .stdout = .{},
+        .stderr = .{},
+        .exit_code = 0,
+    };
+
+    var arena_state: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var missing: std.Io.Writer.Allocating = .init(arena);
+    try output.writeJson(io, tmp.dir, &missing.writer);
+    const old = try std.json.parseFromSliceLeaky(std.json.Value, arena, missing.written(), .{});
+    try t.expectEqual(.null, std.meta.activeTag(old.object.get("command").?));
+
+    try saveCommand(io, tmp.dir, "echo \"hi\" >&2\n");
+    var saved: std.Io.Writer.Allocating = .init(arena);
+    try output.writeJson(io, tmp.dir, &saved.writer);
+    const json = try std.json.parseFromSliceLeaky(std.json.Value, arena, saved.written(), .{});
+    try t.expectEqualStrings("echo \"hi\" >&2\n", json.object.get("command").?.string);
 }

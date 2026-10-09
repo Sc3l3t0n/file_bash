@@ -134,6 +134,7 @@ pub fn execute(
     defer Lock.remove(io, output_dir) catch {};
 
     try Output.Status.clear(io, output_dir);
+    try Output.saveCommand(io, output_dir, parsed.source);
     const stdout_file = try output_dir.createFile(io, "stdout", .{});
     defer stdout_file.close(io);
     const stderr_file = try output_dir.createFile(io, "stderr", .{});

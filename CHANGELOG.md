@@ -12,6 +12,8 @@ All notable changes to this project are documented here. The format follows
   `~/.codex/AGENTS.md` and `~/.gemini/GEMINI.md`.
 - `fb install custom <path>` manages the `fb` section in any instruction file.
   `uninstall` accepts the same targets.
+- `--json` reports include `command`, the shell source that was run. Each run
+  saves it to a `command` file in its directory.
 
 ### Changed
 

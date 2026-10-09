@@ -10,7 +10,7 @@ pub const Excerpt = struct {
     }
 };
 
-const chunk_size = 4096;
+pub const chunk_size = 4096;
 
 /// Writes the requested head and tail of `file`, each under a labeled marker.
 pub fn write(io: std.Io, file: std.Io.File, excerpt: Excerpt, label: []const u8, out: *std.Io.Writer) !void {
