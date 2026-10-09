@@ -17,6 +17,8 @@ pub const StreamType = enum(u8) { stdout, stderr };
 
 /// Absolute run directory path, without a trailing separator.
 path: []const u8,
+/// Shell source as passed to `fb run`; null for runs saved before it was recorded.
+command: ?[]const u8 = null,
 stdout: Stream,
 stderr: Stream,
 exit_code: u8,
@@ -81,22 +83,23 @@ pub const Status = struct {
     }
 };
 
-/// Saves the shell source so later reports can show which command ran.
-pub fn saveCommand(io: std.Io, directory: std.Io.Dir, source: []const u8) !void {
-    try directory.writeFile(io, .{ .sub_path = command_filename, .data = source });
-}
-
 /// Rebuild the report from the run's files using this invocation's excerpt options.
 pub fn read(
     io: std.Io,
+    arena: std.mem.Allocator,
     directory: std.Io.Dir,
     path: []const u8,
     stdout_lines: excerpt.Excerpt,
     stderr_lines: excerpt.Excerpt,
 ) !Output {
     const status = try Status.read(io, directory);
+    const command = directory.readFileAlloc(io, command_filename, arena, .unlimited) catch |err| switch (err) {
+        error.FileNotFound => null,
+        else => return err,
+    };
     var output: Output = .{
         .path = path,
+        .command = command,
         .stdout = .{ .lines = stdout_lines },
         .stderr = .{ .lines = stderr_lines },
         .exit_code = status.exit_code,
@@ -148,6 +151,16 @@ fn writeText(output: Output, io: std.Io, directory: std.Io.Dir, out: *std.Io.Wri
     if (output.oversized) |stream| try out.print(" oversized={s}", .{@tagName(stream)});
     if (output.duration.toNanoseconds() > 0) try out.print(" time={f}", .{output.duration});
     try out.writeAll("]\n");
+    if (output.command) |command| {
+        if (std.mem.indexOfAny(u8, command, "\r\n") == null) {
+            try out.print("command: {s}\n", .{command});
+        } else {
+            // Multi-line source uses the excerpt markers so each line stays intact.
+            try out.print(">>> command\n{s}", .{command});
+            if (!std.mem.endsWith(u8, command, "\n")) try out.writeByte('\n');
+            try out.writeAll("<<<\n");
+        }
+    }
 
     inline for (stream_names) |name| {
         const stream = @field(output, name);
@@ -171,26 +184,13 @@ fn writeJson(output: Output, io: std.Io, directory: std.Io.Dir, out: *std.Io.Wri
     var json: std.json.Stringify = .{ .writer = out };
     try json.beginObject();
 
-    // Runs saved before the command was recorded report null.
     try json.objectField("command");
-    if (directory.openFile(io, command_filename, .{})) |file| {
-        defer file.close(io);
-
+    if (output.command) |command| {
         try json.beginWriteRaw();
-        var escaped = try JsonString.begin(out);
-        var buffer: [excerpt.chunk_size]u8 = undefined;
-        var offset: u64 = 0;
-        while (true) {
-            const length = try file.readPositionalAll(io, &buffer, offset);
-            if (length == 0) break;
-            try escaped.writer.writeAll(buffer[0..length]);
-            offset += length;
-        }
-        try escaped.finish();
+        try JsonString.write(command, out);
         json.endWriteRaw();
-    } else |err| switch (err) {
-        error.FileNotFound => try json.write(null),
-        else => return err,
+    } else {
+        try json.write(null);
     }
 
     inline for (stream_names) |name| {
@@ -273,6 +273,7 @@ test "writeText formatting" {
 
     const output: Output = .{
         .path = "/test/run",
+        .command = "zig build test",
         .stdout = .{ .size = 21, .lines = .{ .tail = 2 } },
         .stderr = .{ .size = 7, .lines = .{ .tail = 1 } },
         .exit_code = 0,
@@ -287,6 +288,7 @@ test "writeText formatting" {
     var expected_buf: [512]u8 = undefined;
     const expected = try std.fmt.bufPrint(&expected_buf,
         \\[fb exit=0 time=1.234s]
+        \\command: zig build test
         \\stdout (21 B): /test/run{c}stdout
         \\stderr (7 B): /test/run{c}stderr
         \\
@@ -298,6 +300,41 @@ test "writeText formatting" {
         \\>>> stderr tail 1
         \\warn 1
         \\<<<
+        \\
+    , .{ std.fs.path.sep, std.fs.path.sep });
+    try t.expectEqualStrings(expected, out.written());
+}
+
+test "writeText with a multi-line command" {
+    const t = std.testing;
+    const io = t.io;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "stdout", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "stderr", .data = "" });
+
+    const output: Output = .{
+        .path = "/test/run",
+        .command = "cd src\nzig build",
+        .stdout = .{},
+        .stderr = .{},
+        .exit_code = 0,
+    };
+
+    var out: std.Io.Writer.Allocating = .init(t.allocator);
+    defer out.deinit();
+    try output.writeText(io, tmp.dir, &out.writer);
+
+    var expected_buf: [256]u8 = undefined;
+    const expected = try std.fmt.bufPrint(&expected_buf,
+        \\[fb exit=0]
+        \\>>> command
+        \\cd src
+        \\zig build
+        \\<<<
+        \\stdout (0 B): /test/run{c}stdout
+        \\stderr (0 B): /test/run{c}stderr
         \\
     , .{ std.fs.path.sep, std.fs.path.sep });
     try t.expectEqualStrings(expected, out.written());
@@ -389,34 +426,33 @@ test "status round-trips the oversized stream" {
     try t.expectError(error.InvalidRunStatus, Status.read(io, tmp.dir));
 }
 
-test "writeJson reports the saved command" {
+test "read loads the saved command for the JSON report" {
     const t = std.testing;
     const io = t.io;
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.writeFile(io, .{ .sub_path = "stdout", .data = "" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "stderr", .data = "" });
-
-    const output: Output = .{
-        .path = "/test/run",
-        .stdout = .{},
-        .stderr = .{},
-        .exit_code = 0,
-    };
-
     var arena_state: std.heap.ArenaAllocator = .init(t.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var missing: std.Io.Writer.Allocating = .init(arena);
-    try output.writeJson(io, tmp.dir, &missing.writer);
-    const old = try std.json.parseFromSliceLeaky(std.json.Value, arena, missing.written(), .{});
-    try t.expectEqual(.null, std.meta.activeTag(old.object.get("command").?));
+    try tmp.dir.writeFile(io, .{ .sub_path = "stdout", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "stderr", .data = "" });
+    try (Status{ .exit_code = 0, .timed_out = false }).save(io, tmp.dir);
 
-    try saveCommand(io, tmp.dir, "echo \"hi\" >&2\n");
-    var saved: std.Io.Writer.Allocating = .init(arena);
-    try output.writeJson(io, tmp.dir, &saved.writer);
-    const json = try std.json.parseFromSliceLeaky(std.json.Value, arena, saved.written(), .{});
-    try t.expectEqualStrings("echo \"hi\" >&2\n", json.object.get("command").?.string);
+    const missing = try read(io, arena, tmp.dir, "/test/run", .{}, .{});
+    try t.expectEqual(null, missing.command);
+
+    var missing_out: std.Io.Writer.Allocating = .init(arena);
+    try missing.writeJson(io, tmp.dir, &missing_out.writer);
+    const missing_json = try std.json.parseFromSliceLeaky(std.json.Value, arena, missing_out.written(), .{});
+    try t.expectEqual(.null, std.meta.activeTag(missing_json.object.get("command").?));
+
+    try tmp.dir.writeFile(io, .{ .sub_path = command_filename, .data = "echo \"hi\" >&2\n" });
+    const saved = try read(io, arena, tmp.dir, "/test/run", .{}, .{});
+
+    var saved_out: std.Io.Writer.Allocating = .init(arena);
+    try saved.writeJson(io, tmp.dir, &saved_out.writer);
+    const saved_json = try std.json.parseFromSliceLeaky(std.json.Value, arena, saved_out.written(), .{});
+    try t.expectEqualStrings("echo \"hi\" >&2\n", saved_json.object.get("command").?.string);
 }

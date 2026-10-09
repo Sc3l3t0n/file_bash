@@ -22,7 +22,10 @@ fb run 'echo hello'
 The runner prints the absolute paths to separate `stdout` and `stderr` files in
 a unique directory under `file_bash/` in the temporary directory. Once the
 command finishes, it prints a summary header with the exit code and duration,
-followed by each stream's size and file path, and any requested excerpts.
+the command, each stream's size and file path, and any requested excerpts. A
+single-line command follows `command:`; a multi-line command is enclosed
+between `>>> command` and `<<<` markers. Runs saved by an older `fb` omit the
+command.
 Output goes directly to the files while the command runs, and the files remain
 until you remove them or the system cleans its temporary directory.
 

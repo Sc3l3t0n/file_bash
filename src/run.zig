@@ -134,7 +134,7 @@ pub fn execute(
     defer Lock.remove(io, output_dir) catch {};
 
     try Output.Status.clear(io, output_dir);
-    try Output.saveCommand(io, output_dir, parsed.source);
+    try output_dir.writeFile(io, .{ .sub_path = Output.command_filename, .data = parsed.source });
     const stdout_file = try output_dir.createFile(io, "stdout", .{});
     defer stdout_file.close(io);
     const stderr_file = try output_dir.createFile(io, "stderr", .{});
@@ -182,7 +182,7 @@ pub fn execute(
         .oversized = status.oversized,
         .duration = status.duration,
     }).save(io, output_dir);
-    const output = try Output.read(io, output_dir, output_path, parsed.stdout, parsed.stderr);
+    const output = try Output.read(io, arena, output_dir, output_path, parsed.stdout, parsed.stderr);
     try output.writeReport(io, output_dir, parsed.style, stdout);
 
     return status.code;
