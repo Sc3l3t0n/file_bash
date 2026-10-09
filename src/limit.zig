@@ -47,7 +47,7 @@ fn parse(text: []const u8) Error!u64 {
     const count = std.fmt.parseUnsigned(u64, digits, 10) catch return error.InvalidMaxSize;
     if (count == 0) return error.InvalidMaxSize;
 
-    return std.math.shlExact(u64, count, @intFromEnum(unit)) catch error.InvalidMaxSize;
+    return std.math.shlExact(u64, count, @backingInt(unit)) catch error.InvalidMaxSize;
 }
 
 test "size limit environment parsing" {

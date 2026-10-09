@@ -125,8 +125,9 @@ test "tail" {
 }
 
 test "tail across chunks" {
-    const line = "0123456789" ** 10 ++ "\n";
-    const data = line ** 100;
-    try expect(data, .{ .tail = 3 }, "\n>>> x tail 3\n" ++ line ** 3 ++ "<<<\n");
-    try expect(data, .{ .head = 3 }, "\n>>> x head 3\n" ++ line ** 3 ++ "<<<\n");
+    const line = std.mem.asBytes(&@as([10][10]u8, @splat("0123456789".*))) ++ "\n";
+    const data = std.mem.asBytes(&@as([100][line.len]u8, @splat(line.*)));
+    const last = std.mem.asBytes(&@as([3][line.len]u8, @splat(line.*)));
+    try expect(data, .{ .tail = 3 }, "\n>>> x tail 3\n" ++ last ++ "<<<\n");
+    try expect(data, .{ .head = 3 }, "\n>>> x head 3\n" ++ last ++ "<<<\n");
 }

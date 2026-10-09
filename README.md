@@ -6,7 +6,7 @@ long or noisy commands stay easy to inspect.
 
 ## Install
 
-Clone this repository, then build from its directory with Zig 0.16.0 or newer:
+Clone this repository, then build from its directory with Zig 0.17.0 or newer:
 
 ```sh
 zig build -Doptimize=ReleaseFast

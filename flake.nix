@@ -22,7 +22,7 @@
         pkgs,
         ...
       }: let
-        zig = inputs'.zig.packages."0.16.0";
+        zig = inputs'.zig.packages."0.17.0";
       in {
         _module.args.pkgs = import inputs.nixpkgs {
           inherit system;
@@ -63,10 +63,7 @@
         };
 
         devShells.default = pkgs.mkShell {
-          nativeBuildInputs = with pkgs; [
-            zig
-            zls
-          ];
+          nativeBuildInputs = [pkgs.zig];
         };
       };
     };
