@@ -12,7 +12,8 @@ selects that command; otherwise it is passed to `run`. An explicit `run` treats
 the next argument as shell source, even if it matches a command name.
 
 Quote the entire command. A second command argument is an error. Standard input
-is inherited.
+is the null device (`/dev/null`, or `NUL` on Windows), so commands that read it
+get end-of-file immediately.
 
 ```sh
 fb 'echo hello; echo error >&2; exit 7'
