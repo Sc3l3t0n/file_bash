@@ -23,6 +23,16 @@ All notable changes to this project are documented here. The format follows
   show `fb run -l 20 -t 30s 'zig build'`, and document `fb last [options]` and
   `fb print [options] <id>`.
 
+### Security
+
+- On Linux and macOS, saved output moves from the shared `file_bash` directory
+  to a per-user `file_bash-<uid>` directory under the temporary directory. fb
+  refuses to use it, failing with `OutputDirectoryNotPrivate`, when another
+  user owns it, when group or others have any permission on it, or when a
+  symlink or file takes its place. Windows keeps `%TMP%\file_bash`, which is
+  already per user. `fb clean` does not remove the old `/tmp/file_bash`; delete
+  it by hand.
+
 ### Fixed
 
 - Commands read end-of-file from standard input instead of failing with

@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 
 pub const last_filename = "last";
 
-pub const output_dirname = "file_bash";
+const output_dirname = "file_bash";
 
 /// Returns a borrowed absolute path; does not allocate or create the directory.
 /// The environment map must remain alive while the returned path is in use.
@@ -69,26 +69,114 @@ test "Windows temporary directory precedence and missing environment" {
     try t.expectError(error.TemporaryDirectoryMustBeAbsolute, tempPath(&environ));
 }
 
-/// The shared parent of every run directory, opened for reading.
+/// Run directories are private to the user who started fb.
+pub const private_permissions: std.Io.File.Permissions = if (builtin.os.tag == .windows) .default_dir else .fromMode(0o700);
+
+/// The shared parent of every run directory.
 pub const Outputs = struct {
-    /// Borrowed from the environment map; see `tempPath`.
-    temp_path: []const u8,
+    /// Absolute path of `parent`.
+    path: []const u8,
     parent: std.Io.Dir,
 };
 
-/// Opens the output directory under the temporary directory, or returns null
-/// when no run has created it yet.
-pub fn openOutputs(io: std.Io, environ: *const std.process.Environ.Map) !?Outputs {
+pub const Access = enum { open, create };
+
+/// Opens this user's output directory under the temporary directory, creating it
+/// for `.create`. Returns null for `.open` when no run has created it yet.
+/// Unix names include the effective user ID because temporary directories such as
+/// /tmp are shared; Windows %TMP% is already per user.
+pub fn openOutputs(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    environ: *const std.process.Environ.Map,
+    access: Access,
+) !?Outputs {
     const temp_path = try tempPath(environ);
     var temp = try std.Io.Dir.openDirAbsolute(io, temp_path, .{});
     defer temp.close(io);
 
-    const parent = temp.openDir(io, output_dirname, .{}) catch |err| switch (err) {
-        error.FileNotFound => return null,
+    const name = switch (builtin.os.tag) {
+        .windows => output_dirname,
+        else => try std.fmt.allocPrint(arena, output_dirname ++ "-{d}", .{std.posix.system.geteuid()}),
+    };
+    if (access == .create) temp.createDir(io, name, private_permissions) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
         else => return err,
     };
 
-    return .{ .temp_path = temp_path, .parent = parent };
+    // A symlink or file in place of the directory was not created by fb.
+    var parent = temp.openDir(io, name, .{ .iterate = true, .follow_symlinks = false }) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        error.SymLinkLoop, error.NotDir => return error.OutputDirectoryNotPrivate,
+        else => return err,
+    };
+    errdefer parent.close(io);
+    try checkPrivate(parent);
+
+    return .{ .path = try std.fs.path.join(arena, &.{ temp_path, name }), .parent = parent };
+}
+
+/// Rejects a directory that another user owns or can access, such as one created
+/// in advance under a shared /tmp. Windows relies on the per-user %TMP% ACL.
+fn checkPrivate(directory: std.Io.Dir) !void {
+    const uid, const mode = switch (builtin.os.tag) {
+        .linux => stat: {
+            const linux = std.os.linux;
+            var stat: linux.Statx = undefined;
+            const rc = linux.statx(directory.handle, "", linux.AT.EMPTY_PATH, .{ .UID = true, .MODE = true }, &stat);
+            switch (linux.errno(rc)) {
+                .SUCCESS => break :stat .{ stat.uid, stat.mode },
+                else => |err| return std.posix.unexpectedErrno(err),
+            }
+        },
+        .macos => stat: {
+            var stat: std.c.Stat = undefined;
+            switch (std.c.errno(std.c.fstat(directory.handle, &stat))) {
+                .SUCCESS => break :stat .{ stat.uid, stat.mode },
+                else => |err| return std.posix.unexpectedErrno(err),
+            }
+        },
+        .windows => return,
+        else => return error.UnsupportedOperatingSystem,
+    };
+
+    if (uid != std.posix.system.geteuid() or mode & 0o077 != 0) return error.OutputDirectoryNotPrivate;
+}
+
+test "output directory is per user and must stay private" {
+    if (builtin.os.tag != .linux and builtin.os.tag != .macos) return error.SkipZigTest;
+
+    const t = std.testing;
+    const io = t.io;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const path = path_buffer[0..try tmp.dir.realPath(io, &path_buffer)];
+    var environ: std.process.Environ.Map = .init(arena);
+    try environ.put("TMPDIR", path);
+
+    const name = try std.fmt.allocPrint(arena, output_dirname ++ "-{d}", .{std.posix.system.geteuid()});
+    try t.expectEqual(null, try openOutputs(io, arena, &environ, .open));
+
+    const created = (try openOutputs(io, arena, &environ, .create)).?;
+    created.parent.close(io);
+    try t.expectEqualStrings(try std.fs.path.join(arena, &.{ path, name }), created.path);
+    const reopened = (try openOutputs(io, arena, &environ, .open)).?;
+    reopened.parent.close(io);
+
+    try tmp.dir.setFilePermissions(io, name, .fromMode(0o755), .{});
+    try t.expectError(error.OutputDirectoryNotPrivate, openOutputs(io, arena, &environ, .create));
+
+    try tmp.dir.deleteDir(io, name);
+    try tmp.dir.symLink(io, ".", name, .{ .is_directory = true });
+    try t.expectError(error.OutputDirectoryNotPrivate, openOutputs(io, arena, &environ, .open));
+
+    try tmp.dir.deleteFile(io, name);
+    try tmp.dir.writeFile(io, .{ .sub_path = name, .data = "" });
+    try t.expectError(error.OutputDirectoryNotPrivate, openOutputs(io, arena, &environ, .create));
 }
 
 /// Returns a borrowed absolute home path without allocating.
