@@ -23,7 +23,10 @@ fb run 'echo hello'
 The runner prints the absolute paths to separate `stdout` and `stderr` files in
 a unique directory under `file_bash/` in the temporary directory. Once the
 command finishes, it prints a summary header with the exit code and duration,
-followed by each stream's size and file path, and any requested excerpts.
+the command, each stream's size and file path, and any requested excerpts. A
+single-line command follows `command:`; a multi-line command is enclosed
+between `>>> command` and `<<<` markers. Runs saved by an older `fb` omit the
+command.
 Output goes directly to the files while the command runs, and the files remain
 until you remove them or the system cleans its temporary directory.
 
@@ -42,7 +45,7 @@ fb run --name build 'zig build'
 
 Names contain 1–64 ASCII letters, digits, hyphens, or underscores. `last` is
 reserved case-insensitively. Windows binaries also reserve device names.
-Reusing a name overwrites its stdout, stderr, and completion status. While a
+Reusing a name overwrites its stdout, stderr, command, and completion status. While a
 command runs, its directory holds a `lock` file containing the Unix seconds at
 which it started; the file is removed when the run finishes. Reusing a name
 whose lock still exists fails with exit code 1 and reports how long ago the
@@ -76,7 +79,8 @@ fb print --json 0123456789abcdef0123456789abcdef
 
 Each run writes only its ID to `file_bash/last` after successfully starting the
 shell. A failed start leaves the previous run ID unchanged. The run directory
-retains stdout, stderr, and an eleven-byte `status` file containing the exit
+retains stdout, stderr, a `command` file holding the shell source, and an
+eleven-byte `status` file containing the exit
 code, the timeout flag, the oversized stream (0 for none, 1 for stdout, 2 for
 stderr), and the duration in nanoseconds. `run`, `last`, and `print` build
 reports from these files and return the command's exit code. Overlapping runs select the most recently started run. If
@@ -111,7 +115,8 @@ fb run -o:l 5 -e:l=50 'make'
 ## JSON output
 
 `--json` prints one JSON object on completion instead of the text report. It
-cannot be combined with `--async`. Both streams contain `path` and `size` in
+cannot be combined with `--async`. `command` holds the shell source exactly as
+passed to `fb run`, or `null` for runs saved by an older `fb`. Both streams contain `path` and `size` in
 bytes, plus `head` and/or `tail` when requested. The result includes `exit_code`,
 `timed_out`, `oversized` (`"stdout"`, `"stderr"`, or `null`), and `duration_ns`,
 the command's run time in nanoseconds; `fb` still returns the command's exit
