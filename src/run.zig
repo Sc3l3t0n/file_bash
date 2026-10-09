@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const dir = @import("dir.zig");
 const shell = @import("shell.zig");
 const Child = @import("Child.zig");
@@ -96,18 +95,13 @@ pub fn execute(
         break :name &random_name;
     };
 
-    const temp_path = try dir.tempPath(environ);
-    const permissions: std.Io.File.Permissions = if (builtin.os.tag == .windows) .default_dir else .fromMode(0o700);
-
-    var temp_dir = try std.Io.Dir.openDirAbsolute(io, temp_path, .{});
-    defer temp_dir.close(io);
-
     // All runs share one parent directory; it may already exist from earlier runs.
-    var parent_dir = try temp_dir.createDirPathOpen(io, dir.output_dirname, .{ .permissions = permissions });
+    const outputs = (try dir.openOutputs(io, arena, environ, .create)).?;
+    const parent_dir = outputs.parent;
     defer parent_dir.close(io);
 
     // A named run reuses its directory; a random name must be fresh.
-    parent_dir.createDir(io, name, permissions) catch |err| {
+    parent_dir.createDir(io, name, dir.private_permissions) catch |err| {
         if (err != error.PathAlreadyExists or parsed.name == null) return err;
     };
     var output_dir = try parent_dir.openDir(io, name, .{ .follow_symlinks = false });
@@ -140,7 +134,7 @@ pub fn execute(
     const stderr_file = try output_dir.createFile(io, "stderr", .{});
     defer stderr_file.close(io);
 
-    const output_path = try std.fs.path.join(arena, &.{ temp_path, dir.output_dirname, name });
+    const output_path = try std.fs.path.join(arena, &.{ outputs.path, name });
     const shell_argv = try shell.command(environ, parsed.source);
 
     // With --async the paths are reported before spawning so a caller can follow

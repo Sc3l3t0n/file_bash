@@ -6,7 +6,7 @@ const nothing_to_clean = "fb outputs already cleaned up\n";
 const usage =
     \\Usage: fb clean
     \\
-    \\Remove all children of the temporary file_bash directory, keeping the directory.
+    \\Remove all saved runs from your fb output directory, keeping the directory.
     \\Uses the same temporary directory as fb run. Missing output is harmless.
     \\
     \\Options:
@@ -16,6 +16,7 @@ const usage =
 
 pub fn execute(
     io: std.Io,
+    arena: std.mem.Allocator,
     args: []const [:0]const u8,
     environ: *const std.process.Environ.Map,
     stdout: *std.Io.Writer,
@@ -33,19 +34,11 @@ pub fn execute(
         return 2;
     }
 
-    var temp_dir = try std.Io.Dir.openDirAbsolute(io, try dir.tempPath(environ), .{});
-    defer temp_dir.close(io);
-
-    var output_dir = temp_dir.openDir(io, dir.output_dirname, .{
-        .iterate = true,
-        .follow_symlinks = false,
-    }) catch |err| switch (err) {
-        error.FileNotFound => {
-            try stdout.writeAll(nothing_to_clean);
-            return 0;
-        },
-        else => return err,
+    const outputs = try dir.openOutputs(io, arena, environ, .open) orelse {
+        try stdout.writeAll(nothing_to_clean);
+        return 0;
     };
+    const output_dir = outputs.parent;
     defer output_dir.close(io);
 
     var children = output_dir.iterate();
