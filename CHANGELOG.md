@@ -24,6 +24,16 @@ All notable changes to this project are documented here. The format follows
   `fb print [options] <id>`.
 - Building `fb` now requires Zig 0.17.0. The Nix flake pins Zig 0.17.0.
 
+### Security
+
+- On Linux and macOS, saved output moves from the shared `file_bash` directory
+  to a per-user `file_bash-<uid>` directory under the temporary directory. fb
+  refuses to use it, failing with `OutputDirectoryNotPrivate`, when another
+  user owns it, when group or others have any permission on it, or when a
+  symlink or file takes its place. Windows keeps `%TMP%\file_bash`, which is
+  already per user. `fb clean` does not remove the old `/tmp/file_bash`; delete
+  it by hand.
+
 ### Fixed
 
 - Commands read end-of-file from standard input instead of failing with

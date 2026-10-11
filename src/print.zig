@@ -42,7 +42,7 @@ pub fn execute(
     }
 
     const id = parsed.name.?;
-    const outputs = try dir.openOutputs(io, environ) orelse return report.missing(.named, id, stderr);
+    const outputs = try dir.openOutputs(io, arena, environ, .open) orelse return report.missing(.named, id, stderr);
     defer outputs.parent.close(io);
 
     return report.write(io, arena, outputs, id, .named, parsed, stdout, stderr);
@@ -68,7 +68,8 @@ test "print reports an explicit saved ID without changing last" {
     try t.expectEqualStrings("", absent_out.written());
     try t.expectEqualStrings("no run named 'absent'\n", absent_err.written());
 
-    var parent = try tmp.dir.createDirPathOpen(io, dir.output_dirname, .{});
+    const outputs = (try dir.openOutputs(io, arena, &environ, .create)).?;
+    const parent = outputs.parent;
     defer parent.close(io);
     const selected_id = "selected";
     const last_id = "newest";

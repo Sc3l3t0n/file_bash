@@ -18,7 +18,7 @@ const usage =
     \\  run        run a shell command and save stdout and stderr to files (default)
     \\  last       print saved output again without rerunning the command
     \\  print      print a saved run by ID without rerunning the command
-    \\  clean      remove all saved output from the temporary file_bash directory
+    \\  clean      remove all saved output from the fb output directory
     \\  install    install fb instructions into a global agent file (alias: init)
     \\  uninstall  remove fb instructions from a global agent file
     \\
@@ -88,7 +88,7 @@ fn dispatch(
         .run => run.execute(io, arena, parsed.args, environ, stdout, stderr),
         .last => last.execute(io, arena, parsed.args, environ, stdout, stderr),
         .print => print.execute(io, arena, parsed.args, environ, stdout, stderr),
-        .clean => clean.execute(io, parsed.args, environ, stdout, stderr),
+        .clean => clean.execute(io, arena, parsed.args, environ, stdout, stderr),
         .install, .uninstall => blk: {
             const target = instruction.Target.parse(parsed.args) orelse {
                 try stderr.writeAll(usage);

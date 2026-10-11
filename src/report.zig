@@ -27,7 +27,7 @@ pub fn write(
     };
     defer directory.close(io);
 
-    const path = try std.fs.path.join(arena, &.{ outputs.temp_path, dir.output_dirname, id });
+    const path = try std.fs.path.join(arena, &.{ outputs.path, id });
     const output = Output.read(io, arena, directory, path, options.stdout, options.stderr) catch |err| switch (err) {
         error.FileNotFound => return fail(selection, id, .unavailable, stderr),
         else => return err,

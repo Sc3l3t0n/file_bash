@@ -9,7 +9,7 @@ const usage =
     \\Usage: fb last [options]
     \\
     \\Print the last run's saved output again without running the command again.
-    \\The run ID is stored in file_bash/last under the temporary directory.
+    \\The run ID is stored in the file last in the fb output directory.
     \\
     \\Options:
     \\  --json                    print results as JSON
@@ -49,7 +49,7 @@ pub fn execute(
         return 0;
     }
 
-    const outputs = try dir.openOutputs(io, environ) orelse return missing(stderr);
+    const outputs = try dir.openOutputs(io, arena, environ, .open) orelse return missing(stderr);
     defer outputs.parent.close(io);
 
     const id = outputs.parent.readFileAlloc(io, dir.last_filename, arena, .limited(64)) catch |err| switch (err) {
@@ -83,7 +83,8 @@ test "last reads output with new excerpt options and clean removes the last poin
     var err: std.Io.Writer.Allocating = .init(arena);
     try t.expectEqual(1, try execute(io, arena, &.{}, &environ, &out.writer, &err.writer));
 
-    var parent = try tmp.dir.createDirPathOpen(io, dir.output_dirname, .{});
+    const outputs = (try dir.openOutputs(io, arena, &environ, .create)).?;
+    const parent = outputs.parent;
     defer parent.close(io);
     const id = "0123456789abcdef0123456789abcdef";
     try remember(io, parent, id);
@@ -97,7 +98,7 @@ test "last reads output with new excerpt options and clean removes the last poin
     defer directory.close(io);
     try directory.writeFile(io, .{ .sub_path = "stdout", .data = "hello\n" });
     try directory.writeFile(io, .{ .sub_path = "stderr", .data = "" });
-    const output_path = try std.fs.path.join(arena, &.{ path, dir.output_dirname, id });
+    const output_path = try std.fs.path.join(arena, &.{ outputs.path, id });
     const output: Output = .{
         .path = output_path,
         .stdout = .{ .size = 6, .lines = .{ .head = 1 } },
@@ -130,7 +131,7 @@ test "last reads output with new excerpt options and clean removes the last poin
     try t.expectEqual(19, stream.get("size").?.integer);
     try t.expectEqualStrings("second\nthird\n", stream.get("tail").?.string);
     try t.expect(stream.get("head") == null);
-    try t.expectEqual(0, try clean.execute(io, &.{}, &environ, &out.writer, &err.writer));
+    try t.expectEqual(0, try clean.execute(io, arena, &.{}, &environ, &out.writer, &err.writer));
     try t.expectError(error.FileNotFound, parent.openFile(io, dir.last_filename, .{}));
     try t.expectEqual(1, try execute(io, arena, &.{}, &environ, &out.writer, &err.writer));
 }
