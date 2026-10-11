@@ -77,6 +77,14 @@ fb print --tail 20 build
 fb print --json 0123456789abcdef0123456789abcdef
 ```
 
+`last` and `print` also report any run that has not finished, so output can be
+checked while the command continues. The header reads `[fb running]` with
+the time since the run started, sizes and excerpts cover the output written so
+far, JSON reports `exit_code` as `null`, and `fb` returns 0 after a note on
+stderr. A run whose `fb` process was killed keeps its lock and reports as
+running indefinitely. A run that stopped without a status and without a lock,
+because `fb` failed before the command finished, reports an error and returns 1.
+
 Each run writes only its ID to `file_bash/last` after successfully starting the
 shell. A failed start leaves the previous run ID unchanged. The run directory
 retains stdout, stderr, a `command` file holding the shell source, and an
@@ -120,7 +128,8 @@ passed to `fb run`, or `null` for runs saved by an older `fb`. Both streams cont
 bytes, plus `head` and/or `tail` when requested. The result includes `exit_code`,
 `timed_out`, `oversized` (`"stdout"`, `"stderr"`, or `null`), and `duration_ns`,
 the command's run time in nanoseconds; `fb` still returns the command's exit
-code. Diagnostics go to stderr.
+code. For a run that has not finished, `exit_code` is `null` and `duration_ns`
+is the time since it started. Diagnostics go to stderr.
 
 ```sh
 fb run --json --head 3 'echo hello'

@@ -10,6 +10,7 @@ const usage =
     \\
     \\Print the last run's saved output again without running the command again.
     \\The run ID is stored in the file last in the fb output directory.
+    \\A run that has not finished reports its output so far and exits with 0.
     \\
     \\Options:
     \\  --json                    print results as JSON
@@ -111,7 +112,7 @@ test "last reads output with new excerpt options and clean removes the last poin
     try t.expectEqualStrings(id, try parent.readFileAlloc(io, dir.last_filename, arena, .limited(33)));
     try t.expectEqual(1, try execute(io, arena, &.{}, &environ, &out.writer, &err.writer));
     try (Output.Status{
-        .exit_code = output.exit_code,
+        .exit_code = output.exit_code.?,
         .timed_out = output.timed_out,
         .duration = output.duration,
     }).save(io, directory);

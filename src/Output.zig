@@ -2,6 +2,7 @@
 const std = @import("std");
 const excerpt = @import("excerpt.zig");
 const JsonString = @import("JsonString.zig");
+const Lock = @import("lock.zig").Lock;
 const Output = @This();
 
 pub const Style = enum { text, json };
@@ -21,11 +22,12 @@ path: []const u8,
 command: ?[]const u8 = null,
 stdout: Stream,
 stderr: Stream,
-exit_code: u8,
+/// Null while the command is still running.
+exit_code: ?u8,
 timed_out: bool = false,
 /// The file whose size limit killed the command, if any.
 oversized: ?StreamType = null,
-/// Time from spawn until the command was reaped.
+/// Time from spawn until the command was reaped, or since the run started while it is running.
 duration: std.Io.Duration = .zero,
 
 pub const Stream = struct {
@@ -45,12 +47,14 @@ pub const Status = struct {
     const size = 3 + @sizeOf(u64);
     const stream_count = @typeInfo(StreamType).@"enum".field_names.len;
 
-    pub fn read(io: std.Io, directory: std.Io.Dir) !Status {
+    /// Returns null when the status was cleared and the run has not finished.
+    pub fn read(io: std.Io, directory: std.Io.Dir) !?Status {
         const file = try directory.openFile(io, filename, .{});
         defer file.close(io);
 
         var bytes: [size + 1]u8 = undefined;
         const length = try file.readPositionalAll(io, &bytes, 0);
+        if (length == 0) return null;
         if (length != size or bytes[1] > 1 or bytes[2] > stream_count) return error.InvalidRunStatus;
 
         return .{
@@ -84,6 +88,8 @@ pub const Status = struct {
 };
 
 /// Rebuild the report from the run's files using this invocation's excerpt options.
+/// A run without a saved status is running while its lock exists; otherwise it
+/// stopped before finishing and `error.RunIncomplete` is returned.
 pub fn read(
     io: std.Io,
     arena: std.mem.Allocator,
@@ -92,7 +98,9 @@ pub fn read(
     stdout_lines: excerpt.Excerpt,
     stderr_lines: excerpt.Excerpt,
 ) !Output {
-    const status = try Status.read(io, directory);
+    // A run saves its status before removing its lock, so reading the lock first
+    // cannot mistake a run that finishes in between for an incomplete one.
+    const lock = try Lock.read(io, directory);
     const command = directory.readFileAlloc(io, command_filename, arena, .unlimited) catch |err| switch (err) {
         error.FileNotFound => null,
         else => return err,
@@ -102,11 +110,16 @@ pub fn read(
         .command = command,
         .stdout = .{ .lines = stdout_lines },
         .stderr = .{ .lines = stderr_lines },
-        .exit_code = status.exit_code,
-        .timed_out = status.timed_out,
-        .oversized = status.oversized,
-        .duration = status.duration,
+        .exit_code = null,
     };
+    if (try Status.read(io, directory)) |status| {
+        output.exit_code = status.exit_code;
+        output.timed_out = status.timed_out;
+        output.oversized = status.oversized;
+        output.duration = status.duration;
+    } else {
+        output.duration = (lock orelse return error.RunIncomplete).elapsed(io);
+    }
 
     inline for (stream_names) |name| {
         const file = try directory.openFile(io, name, .{});
@@ -146,7 +159,11 @@ pub fn writeReport(output: Output, io: std.Io, directory: std.Io.Dir, style: Sty
 }
 
 fn writeText(output: Output, io: std.Io, directory: std.Io.Dir, out: *std.Io.Writer) !void {
-    try out.print("[fb exit={d}", .{output.exit_code});
+    if (output.exit_code) |code| {
+        try out.print("[fb exit={d}", .{code});
+    } else {
+        try out.writeAll("[fb running");
+    }
     if (output.timed_out) try out.writeAll(" timed_out");
     if (output.oversized) |stream| try out.print(" oversized={s}", .{@tagName(stream)});
     if (output.duration.toNanoseconds() > 0) try out.print(" time={f}", .{output.duration});
@@ -419,8 +436,11 @@ test "status round-trips the oversized stream" {
     for (cases) |oversized| {
         const saved: Status = .{ .exit_code = 153, .timed_out = false, .oversized = oversized };
         try saved.save(io, tmp.dir);
-        try t.expectEqual(saved, try Status.read(io, tmp.dir));
+        try t.expectEqual(saved, (try Status.read(io, tmp.dir)).?);
     }
+
+    try Status.clear(io, tmp.dir);
+    try t.expectEqual(null, try Status.read(io, tmp.dir));
 
     try tmp.dir.writeFile(io, .{ .sub_path = "status", .data = &([_]u8{ 0, 0, 3 } ++ @as([8]u8, @splat(0))) });
     try t.expectError(error.InvalidRunStatus, Status.read(io, tmp.dir));
@@ -455,4 +475,58 @@ test "read loads the saved command for the JSON report" {
     try saved.writeJson(io, tmp.dir, &saved_out.writer);
     const saved_json = try std.json.parseFromSliceLeaky(std.json.Value, arena, saved_out.written(), .{});
     try t.expectEqualStrings("echo \"hi\" >&2\n", saved_json.object.get("command").?.string);
+}
+
+test "read reports a running run from its lock and rejects an unfinished one without it" {
+    const t = std.testing;
+    const io = t.io;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "stdout", .data = "partial\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "stderr", .data = "" });
+    try Status.clear(io, tmp.dir);
+    try t.expectError(error.RunIncomplete, read(io, arena, tmp.dir, "/test/run", .{}, .{}));
+
+    try Lock.write(io, tmp.dir);
+    const running = try read(io, arena, tmp.dir, "/test/run", .{}, .{});
+    try t.expectEqual(null, running.exit_code);
+    try t.expectEqual(8, running.stdout.size);
+    try t.expect(running.duration.toSeconds() < 60);
+
+    try (Status{ .exit_code = 3, .timed_out = false }).save(io, tmp.dir);
+    try t.expectEqual(3, (try read(io, arena, tmp.dir, "/test/run", .{}, .{})).exit_code);
+}
+
+test "running report has no exit code" {
+    const t = std.testing;
+    const io = t.io;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "stdout", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "stderr", .data = "" });
+
+    const output: Output = .{
+        .path = "/test/run",
+        .stdout = .{},
+        .stderr = .{},
+        .exit_code = null,
+        .duration = .fromSeconds(12),
+    };
+
+    var out: std.Io.Writer.Allocating = .init(t.allocator);
+    defer out.deinit();
+    try output.writeText(io, tmp.dir, &out.writer);
+    try t.expect(std.mem.startsWith(u8, out.written(), "[fb running time=12s]\n"));
+
+    out.clearRetainingCapacity();
+    try output.writeJson(io, tmp.dir, &out.writer);
+    const json = try std.json.parseFromSlice(std.json.Value, t.allocator, out.written(), .{});
+    defer json.deinit();
+    try t.expect(json.value.object.get("exit_code").? == .null);
 }

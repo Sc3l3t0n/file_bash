@@ -28,6 +28,11 @@ pub const Lock = struct {
         return .{ .started = std.fmt.parseInt(i64, text, 10) catch return error.InvalidRunLock };
     }
 
+    /// Time since the run started; zero when the lock was written in the future.
+    pub fn elapsed(lock: Lock, io: std.Io) std.Io.Duration {
+        return .fromSeconds(@max(clock.now(io).toSeconds() - lock.started, 0));
+    }
+
     /// Records the current wall-clock time; replaces any stale lock.
     pub fn write(io: std.Io, directory: std.Io.Dir) !void {
         var file = try directory.createFileAtomic(io, filename, .{ .replace = true });
