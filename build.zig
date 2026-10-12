@@ -44,6 +44,38 @@ pub fn build(b: *std.Build) void {
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
-    const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_exe_unit_tests.step);
+    const test_unit_step = b.step("test-unit", "Run unit tests");
+    test_unit_step.dependOn(&run_exe_unit_tests.step);
+
+    const fixture = b.addExecutable(.{
+        .name = "fb-fixture",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/fixture.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const test_options = b.addOptions();
+    test_options.addOptionPath("fb_path", exe.getEmittedBin());
+    test_options.addOptionPathDirectory("fixture_directory", fixture.getEmittedBinDirectory());
+    test_options.addOption([]const u8, "fixture_name", fixture.name);
+
+    const cli_mod = b.createModule(.{
+        .root_source_file = b.path("test/cli.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    cli_mod.addOptions("test_options", test_options);
+
+    const cli_tests = b.addTest(.{ .root_module = cli_mod });
+
+    const run_cli_tests = b.addRunArtifact(cli_tests);
+
+    const test_cli_step = b.step("test-cli", "Run CLI tests against the built fb");
+    test_cli_step.dependOn(&run_cli_tests.step);
+
+    const test_step = b.step("test", "Run unit and CLI tests");
+    test_step.dependOn(test_unit_step);
+    test_step.dependOn(test_cli_step);
 }

@@ -24,3 +24,7 @@
 - Declare `@import` bindings at file scope; use the named bindings in declarations
   and functions instead of inline imports.
 - use `const t = std.testing` in tests
+- Run `zig build test` before committing. It runs the unit tests
+  (`zig build test-unit`) and the CLI tests in `test/cli.zig`
+  (`zig build test-cli`), which run the built `fb` with `test/fixture.zig`
+  as the command. CLI tests check only documented behavior.
