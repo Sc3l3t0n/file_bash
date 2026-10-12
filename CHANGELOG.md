@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-13
+
 ### Added
 
 - `fb install codex` and `fb install antigravity` manage the `fb` section in
@@ -97,5 +99,6 @@ to inspect. Aimed at coding agents, but works for humans too.
 Linux, macOS, and Windows. Temporary directory resolution follows each
 platform's conventions.
 
-[Unreleased]: https://github.com/Sc3l3t0n/file_bash/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Sc3l3t0n/file_bash/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Sc3l3t0n/file_bash/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Sc3l3t0n/file_bash/releases/tag/v0.1.0
