@@ -46,6 +46,9 @@ All notable changes to this project are documented here. The format follows
 - On Windows, `fb install` and `fb uninstall` report named instruction files
   with backslashes only, such as `C:\Users\me\.gemini\GEMINI.md`, instead of
   mixing `\` and `/`.
+- On Windows, a timeout or size limit kills the whole command tree, not only
+  the shell. Before, processes started by the command kept running and held
+  fb's output open, so a caller reading fb's output through a pipe hung.
 
 ## [0.1.0] - 2026-09-11
 

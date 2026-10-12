@@ -2,9 +2,14 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Output = @import("Output.zig");
 
+const windows = std.os.windows;
+
 const Child = @This();
 
 process: std.process.Child,
+/// Job holding a bounded command and its descendants on Windows, so a kill
+/// reaches the whole command tree; null for an unbounded run.
+job: Job,
 timeout: ?std.Io.Duration,
 max_size: ?u64,
 /// Borrowed file receiving the command's stdout; measured while the command runs.
@@ -33,7 +38,10 @@ pub const Options = struct {
 pub fn spawn(io: std.Io, arena: std.mem.Allocator, options: Options) !Child {
     var environ = try nonInteractive(arena, options.environ);
     const bounded = options.timeout != null or options.max_size != null;
-    const process = try std.process.spawn(io, .{
+    const job: Job = if (builtin.os.tag == .windows and bounded) try createJob() else null;
+    errdefer closeJob(job);
+
+    var process = try std.process.spawn(io, .{
         .argv = options.argv,
         .cwd = if (options.cwd) |cwd| .{ .dir = cwd } else .inherit,
         .environ_map = &environ,
@@ -45,10 +53,14 @@ pub fn spawn(io: std.Io, arena: std.mem.Allocator, options: Options) !Child {
         // whole command tree; without a bound, signals keep reaching the
         // child.
         .pgid = if (builtin.os.tag == .windows or !bounded) null else 0,
+        // On Windows the command joins its job before it can start descendants.
+        .start_suspended = job != null,
     });
+    if (job) |handle| try joinJob(io, handle, &process);
 
     return .{
         .process = process,
+        .job = job,
         .timeout = options.timeout,
         .max_size = options.max_size,
         .stdout = options.stdout,
@@ -107,6 +119,8 @@ const Kill = union(enum) {
 /// file outgrows the size limit first. The child is reaped in either case.
 /// Call once per spawned child.
 pub fn wait(child: *Child, io: std.Io) !Status {
+    defer closeJob(child.job);
+
     var status: Status = if (child.timeout != null or child.max_size != null)
         try child.waitBounded(io)
     else
@@ -154,8 +168,9 @@ fn watchSize(
 fn waitBounded(child: *Child, io: std.Io) !Status {
     // The identifier is still set because the child was spawned and has not
     // been waited on yet. Terminating uses it directly because only the
-    // pending wait may reap the child.
-    const id = child.process.id.?;
+    // pending wait may reap the child. On Windows the job stands in for the
+    // process group.
+    const id = if (builtin.os.tag == .windows) child.job.? else child.process.id.?;
 
     var events: [3]Event = undefined;
     var select: std.Io.Select(Event) = .init(io, &events);
@@ -229,19 +244,63 @@ fn nonInteractive(
     return map;
 }
 
-/// Exit status reported for a child that fb terminated on Windows.
-const terminated_exit_status: std.os.windows.NTSTATUS = @fromBackingInt(1);
+/// Exit code reported for a command that fb terminated on Windows.
+const terminated_exit_code: windows.UINT = 1;
 
 /// Requests immediate termination without reaping the child. On POSIX the
-/// child's whole process group is signalled, so descendants die with it.
+/// child's whole process group is signalled; on Windows the whole job is
+/// terminated. Either way descendants die with the child.
 fn terminate(id: std.process.Child.Id) !void {
     switch (builtin.os.tag) {
-        .windows => switch (std.os.windows.ntdll.NtTerminateProcess(id, terminated_exit_status)) {
-            .SUCCESS, .PROCESS_IS_TERMINATING => {},
-            else => |status| return std.os.windows.unexpectedStatus(status),
+        .windows => if (!job_api.TerminateJobObject(id, terminated_exit_code).toBool()) {
+            return windows.unexpectedError(windows.GetLastError());
         },
         else => try std.posix.kill(-id, .KILL),
     }
+}
+
+const Job = ?windows.HANDLE;
+
+/// Job object functions that `std.os.windows` does not declare.
+const job_api = struct {
+    extern "kernel32" fn CreateJobObjectW(
+        lpJobAttributes: ?*windows.SECURITY_ATTRIBUTES,
+        lpName: ?[*:0]const u16,
+    ) callconv(.winapi) ?windows.HANDLE;
+    extern "kernel32" fn AssignProcessToJobObject(
+        hJob: windows.HANDLE,
+        hProcess: windows.HANDLE,
+    ) callconv(.winapi) windows.BOOL;
+    extern "kernel32" fn TerminateJobObject(
+        hJob: windows.HANDLE,
+        uExitCode: windows.UINT,
+    ) callconv(.winapi) windows.BOOL;
+};
+
+fn createJob() !windows.HANDLE {
+    return job_api.CreateJobObjectW(null, null) orelse windows.unexpectedError(windows.GetLastError());
+}
+
+/// Assigns the suspended process to the job and resumes it. A process that
+/// cannot join is killed and reaped, because fb could not stop its descendants.
+fn joinJob(io: std.Io, job: windows.HANDLE, process: *std.process.Child) !void {
+    if (!job_api.AssignProcessToJobObject(job, process.id.?).toBool()) {
+        const err = windows.GetLastError();
+        process.kill(io);
+        return windows.unexpectedError(err);
+    }
+    switch (windows.ntdll.NtResumeThread(process.thread_handle, null)) {
+        .SUCCESS => {},
+        else => |status| {
+            process.kill(io);
+            return windows.unexpectedStatus(status);
+        },
+    }
+}
+
+fn closeJob(job: Job) void {
+    if (builtin.os.tag != .windows) return;
+    if (job) |handle| windows.CloseHandle(handle);
 }
 
 test "child environment is non-interactive" {
