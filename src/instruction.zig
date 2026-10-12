@@ -10,11 +10,12 @@ pub const Named = enum {
 
     /// Instruction file relative to the home directory.
     fn relative(named: Named) []const u8 {
+        const sep = std.fs.path.sep_str;
         return switch (named) {
-            .agents => ".agents/AGENTS.md",
-            .claude => ".claude/CLAUDE.md",
-            .codex => ".codex/AGENTS.md",
-            .antigravity => ".gemini/GEMINI.md",
+            .agents => ".agents" ++ sep ++ "AGENTS.md",
+            .claude => ".claude" ++ sep ++ "CLAUDE.md",
+            .codex => ".codex" ++ sep ++ "AGENTS.md",
+            .antigravity => ".gemini" ++ sep ++ "GEMINI.md",
         };
     }
 };
