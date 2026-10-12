@@ -39,6 +39,10 @@ All notable changes to this project are documented here. The format follows
 - Commands read end-of-file from standard input instead of failing with
   `Bad file descriptor`. Standard input is now the null device rather than a
   closed descriptor, and the usage docs no longer claim it is inherited.
+- `fb print` and `fb last` report a run that is still running instead of
+  failing with `InvalidRunStatus`. The header reads `[fb running]` with the
+  time since the run started, JSON reports `exit_code` as `null`, and `fb`
+  returns 0. A run that stopped without saving its status reports a clear error.
 
 ## [0.1.0] - 2026-09-11
 

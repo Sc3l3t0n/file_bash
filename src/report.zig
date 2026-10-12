@@ -7,10 +7,11 @@ const Output = @import("Output.zig");
 /// How the run was chosen; only changes the wording of failures.
 pub const Selection = enum { last, named };
 
-const Failure = enum { missing, unavailable };
+const Failure = enum { missing, unavailable, incomplete };
 
 /// Reads the run directory `id` under `outputs` and writes its report using the
-/// style and excerpt options in `options`. Returns the saved exit code.
+/// style and excerpt options in `options`. Returns the saved exit code, or 0
+/// for a run that is still running.
 pub fn write(
     io: std.Io,
     arena: std.mem.Allocator,
@@ -30,12 +31,16 @@ pub fn write(
     const path = try std.fs.path.join(arena, &.{ outputs.path, id });
     const output = Output.read(io, arena, directory, path, options.stdout, options.stderr) catch |err| switch (err) {
         error.FileNotFound => return fail(selection, id, .unavailable, stderr),
+        error.RunIncomplete => return fail(selection, id, .incomplete, stderr),
         else => return err,
     };
 
     try output.writeReport(io, directory, options.style, stdout);
 
-    return output.exit_code;
+    return output.exit_code orelse {
+        try stderr.print("run '{s}' has not finished; output so far is shown (if fb was killed, the run will never finish)\n", .{id});
+        return 0;
+    };
 }
 
 /// Reports a run that cannot be found; returns the failure exit code.
@@ -45,10 +50,14 @@ pub fn missing(selection: Selection, id: []const u8, stderr: *std.Io.Writer) !u8
 
 fn fail(selection: Selection, id: []const u8, failure: Failure, stderr: *std.Io.Writer) !u8 {
     switch (selection) {
-        .last => try stderr.writeAll("last run's output or completion status is unavailable\n"),
+        .last => switch (failure) {
+            .missing, .unavailable => try stderr.writeAll("last run's output or completion status is unavailable\n"),
+            .incomplete => try stderr.writeAll("last run did not finish; fb stopped before saving its completion status\n"),
+        },
         .named => switch (failure) {
             .missing => try stderr.print("no run named '{s}'\n", .{id}),
             .unavailable => try stderr.print("saved run '{s}' output or completion status is unavailable\n", .{id}),
+            .incomplete => try stderr.print("saved run '{s}' did not finish; fb stopped before saving its completion status\n", .{id}),
         },
     }
 

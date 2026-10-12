@@ -4,11 +4,13 @@ const dir = @import("dir.zig");
 const report = @import("report.zig");
 const last = @import("last.zig");
 const Output = @import("Output.zig");
+const Lock = @import("lock.zig").Lock;
 
 const usage =
     \\Usage: fb print [options] <id>
     \\
     \\Print a saved run's output again without running the command again.
+    \\A run that has not finished reports its output so far and exits with 0.
     \\
     \\Options:
     \\  --json                    print results as JSON
@@ -106,5 +108,30 @@ test "print reports an explicit saved ID without changing last" {
     try t.expectEqualStrings(
         "saved run 'incomplete' output or completion status is unavailable\n",
         unavailable_err.written(),
+    );
+
+    var active = try parent.createDirPathOpen(io, "active", .{});
+    defer active.close(io);
+    try active.writeFile(io, .{ .sub_path = "stdout", .data = "so far\n" });
+    try active.writeFile(io, .{ .sub_path = "stderr", .data = "" });
+    try Output.Status.clear(io, active);
+    var stopped_out: std.Io.Writer.Allocating = .init(arena);
+    var stopped_err: std.Io.Writer.Allocating = .init(arena);
+    try t.expectEqual(1, try execute(io, arena, &.{"active"}, &environ, &stopped_out.writer, &stopped_err.writer));
+    try t.expectEqualStrings("", stopped_out.written());
+    try t.expectEqualStrings(
+        "saved run 'active' did not finish; fb stopped before saving its completion status\n",
+        stopped_err.written(),
+    );
+
+    try Lock.write(io, active);
+    var running_out: std.Io.Writer.Allocating = .init(arena);
+    var running_err: std.Io.Writer.Allocating = .init(arena);
+    try t.expectEqual(0, try execute(io, arena, &.{ "--out:tail", "1", "active" }, &environ, &running_out.writer, &running_err.writer));
+    try t.expect(std.mem.startsWith(u8, running_out.written(), "[fb running"));
+    try t.expect(std.mem.endsWith(u8, running_out.written(), ">>> stdout tail 1\nso far\n<<<\n"));
+    try t.expectEqualStrings(
+        "run 'active' has not finished; output so far is shown (if fb was killed, the run will never finish)\n",
+        running_err.written(),
     );
 }
