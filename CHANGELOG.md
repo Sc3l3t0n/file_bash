@@ -49,6 +49,9 @@ All notable changes to this project are documented here. The format follows
 - On Windows, a timeout or size limit kills the whole command tree, not only
   the shell. Before, processes started by the command kept running and held
   fb's output open, so a caller reading fb's output through a pipe hung.
+- On Windows, the size limit works instead of failing with `AccessDenied` and
+  leaving the command running. If fb fails while waiting for a bounded
+  command, it kills the command first.
 
 ## [0.1.0] - 2026-09-11
 

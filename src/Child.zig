@@ -135,7 +135,7 @@ const Waited = std.process.Child.WaitError!std.process.Child.Term;
 const Event = union(enum) {
     finished: Waited,
     expired: std.Io.Cancelable!void,
-    oversized: std.Io.File.StatError!?Output.StreamType,
+    oversized: std.Io.File.LengthError!?Output.StreamType,
 };
 
 fn waitProcess(io: std.Io, process: *std.process.Child) Waited {
@@ -153,14 +153,15 @@ fn watchSize(
     stdout: std.Io.File,
     stderr: std.Io.File,
     max_size: u64,
-) std.Io.File.StatError!?Output.StreamType {
+) std.Io.File.LengthError!?Output.StreamType {
     const files = [_]std.Io.File{ stdout, stderr };
     const names = [_]Output.StreamType{ .stdout, .stderr };
 
     while (true) {
         io.sleep(poll_interval, .awake) catch return null;
         for (files, names) |file, name| {
-            if ((try file.stat(io)).size > max_size) return name;
+            // The files are write-only; on Windows a full stat needs read access.
+            if (try file.length(io) > max_size) return name;
         }
     }
 }
@@ -175,6 +176,9 @@ fn waitBounded(child: *Child, io: std.Io) !Status {
     var events: [3]Event = undefined;
     var select: std.Io.Select(Event) = .init(io, &events);
     defer select.cancelDiscard();
+    // A command left running after an error would outlive fb and keep its
+    // inherited output handles open.
+    errdefer terminate(id) catch {};
 
     try select.concurrent(.finished, waitProcess, .{ io, &child.process });
     if (child.timeout) |timeout| select.async(.expired, expire, .{ io, timeout });
