@@ -43,6 +43,9 @@ All notable changes to this project are documented here. The format follows
   failing with `InvalidRunStatus`. The header reads `[fb running]` with the
   time since the run started, JSON reports `exit_code` as `null`, and `fb`
   returns 0. A run that stopped without saving its status reports a clear error.
+- On Windows, `fb install` and `fb uninstall` report named instruction files
+  with backslashes only, such as `C:\Users\me\.gemini\GEMINI.md`, instead of
+  mixing `\` and `/`.
 
 ## [0.1.0] - 2026-09-11
 
