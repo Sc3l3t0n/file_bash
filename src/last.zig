@@ -4,6 +4,7 @@ const command = @import("command.zig");
 const clean = @import("clean.zig");
 const report = @import("report.zig");
 const Output = @import("Output.zig");
+const Lock = @import("lock.zig").Lock;
 
 const usage =
     \\Usage: fb last [options]
@@ -135,4 +136,48 @@ test "last reads output with new excerpt options and clean removes the last poin
     try t.expectEqual(0, try clean.execute(io, arena, &.{}, &environ, &out.writer, &err.writer));
     try t.expectError(error.FileNotFound, parent.openFile(io, dir.last_filename, .{}));
     try t.expectEqual(1, try execute(io, arena, &.{}, &environ, &out.writer, &err.writer));
+}
+
+test "last reports a running run and an unfinished one" {
+    const t = std.testing;
+    const io = t.io;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const path = path_buffer[0..try tmp.dir.realPath(io, &path_buffer)];
+    var environ = std.process.Environ.Map.init(arena);
+    try environ.put("TMPDIR", path);
+    try environ.put("TMP", path);
+
+    const outputs = (try dir.openOutputs(io, arena, &environ, .create)).?;
+    const parent = outputs.parent;
+    defer parent.close(io);
+    const id = "0123456789abcdef0123456789abcdef";
+    try remember(io, parent, id);
+    var directory = try parent.createDirPathOpen(io, id, .{});
+    defer directory.close(io);
+    try directory.writeFile(io, .{ .sub_path = "stdout", .data = "so far\n" });
+    try directory.writeFile(io, .{ .sub_path = "stderr", .data = "" });
+    try Output.Status.clear(io, directory);
+
+    var stopped_out: std.Io.Writer.Allocating = .init(arena);
+    var stopped_err: std.Io.Writer.Allocating = .init(arena);
+    try t.expectEqual(1, try execute(io, arena, &.{}, &environ, &stopped_out.writer, &stopped_err.writer));
+    try t.expectEqualStrings("", stopped_out.written());
+    try t.expectEqualStrings("last run did not finish; fb stopped before saving its completion status\n", stopped_err.written());
+
+    try Lock.write(io, directory);
+    var running_out: std.Io.Writer.Allocating = .init(arena);
+    var running_err: std.Io.Writer.Allocating = .init(arena);
+    try t.expectEqual(0, try execute(io, arena, &.{ "--json", "--out:tail=1" }, &environ, &running_out.writer, &running_err.writer));
+    const json = try std.json.parseFromSliceLeaky(std.json.Value, arena, running_out.written(), .{});
+    try t.expectEqual(.null, std.meta.activeTag(json.object.get("exit_code").?));
+    try t.expectEqualStrings("so far\n", json.object.get("stdout").?.object.get("tail").?.string);
+    try t.expectEqualStrings(
+        "run '" ++ id ++ "' has not finished; output so far is shown (if fb was killed, the run will never finish)\n",
+        running_err.written(),
+    );
 }

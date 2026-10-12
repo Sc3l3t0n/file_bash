@@ -98,9 +98,6 @@ pub fn read(
     stdout_lines: excerpt.Excerpt,
     stderr_lines: excerpt.Excerpt,
 ) !Output {
-    // A run saves its status before removing its lock, so reading the lock first
-    // cannot mistake a run that finishes in between for an incomplete one.
-    const lock = try Lock.read(io, directory);
     const command = directory.readFileAlloc(io, command_filename, arena, .unlimited) catch |err| switch (err) {
         error.FileNotFound => null,
         else => return err,
@@ -112,13 +109,22 @@ pub fn read(
         .stderr = .{ .lines = stderr_lines },
         .exit_code = null,
     };
-    if (try Status.read(io, directory)) |status| {
-        output.exit_code = status.exit_code;
-        output.timed_out = status.timed_out;
-        output.oversized = status.oversized;
-        output.duration = status.duration;
-    } else {
-        output.duration = (lock orelse return error.RunIncomplete).elapsed(io);
+    // A run writes its lock before clearing its status and saves its status
+    // before removing its lock. The lock is only read for an empty status, and
+    // an empty status without a lock is read again, so a run that finishes in
+    // between is not mistaken for an incomplete one.
+    const status: ?Status = try Status.read(io, directory) orelse status: {
+        if (try Lock.read(io, directory)) |lock| {
+            output.duration = lock.elapsed(io);
+            break :status null;
+        }
+        break :status try Status.read(io, directory) orelse return error.RunIncomplete;
+    };
+    if (status) |saved| {
+        output.exit_code = saved.exit_code;
+        output.timed_out = saved.timed_out;
+        output.oversized = saved.oversized;
+        output.duration = saved.duration;
     }
 
     inline for (stream_names) |name| {
@@ -166,7 +172,12 @@ fn writeText(output: Output, io: std.Io, directory: std.Io.Dir, out: *std.Io.Wri
     }
     if (output.timed_out) try out.writeAll(" timed_out");
     if (output.oversized) |stream| try out.print(" oversized={s}", .{@tagName(stream)});
-    if (output.duration.toNanoseconds() > 0) try out.print(" time={f}", .{output.duration});
+    if (output.duration.toNanoseconds() > 0) {
+        try out.print(" time={f}", .{output.duration});
+    } else if (output.exit_code == null) {
+        // The lock counts whole seconds, so a run in its first second shows 0s.
+        try out.writeAll(" time=0s");
+    }
     try out.writeAll("]\n");
     if (output.command) |command| {
         if (std.mem.indexOfAny(u8, command, "\r\n") == null) {
@@ -500,6 +511,21 @@ test "read reports a running run from its lock and rejects an unfinished one wit
 
     try (Status{ .exit_code = 3, .timed_out = false }).save(io, tmp.dir);
     try t.expectEqual(3, (try read(io, arena, tmp.dir, "/test/run", .{}, .{})).exit_code);
+
+    // A finished run ignores a leftover lock, even an unreadable one.
+    try tmp.dir.writeFile(io, .{ .sub_path = "lock", .data = "garbage\n" });
+    try t.expectEqual(3, (try read(io, arena, tmp.dir, "/test/run", .{}, .{})).exit_code);
+
+    // A lock written in the future, for example after the clock moved back, reports no elapsed time.
+    try Status.clear(io, tmp.dir);
+    var future: [24]u8 = undefined;
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "lock",
+        .data = try std.fmt.bufPrint(&future, "{d}\n", .{std.Io.Clock.real.now(io).toSeconds() + 3600}),
+    });
+    const ahead = try read(io, arena, tmp.dir, "/test/run", .{}, .{});
+    try t.expectEqual(null, ahead.exit_code);
+    try t.expectEqual(0, ahead.duration.toNanoseconds());
 }
 
 test "running report has no exit code" {
@@ -523,6 +549,12 @@ test "running report has no exit code" {
     defer out.deinit();
     try output.writeText(io, tmp.dir, &out.writer);
     try t.expect(std.mem.startsWith(u8, out.written(), "[fb running time=12s]\n"));
+
+    out.clearRetainingCapacity();
+    var started = output;
+    started.duration = .zero;
+    try started.writeText(io, tmp.dir, &out.writer);
+    try t.expect(std.mem.startsWith(u8, out.written(), "[fb running time=0s]\n"));
 
     out.clearRetainingCapacity();
     try output.writeJson(io, tmp.dir, &out.writer);
