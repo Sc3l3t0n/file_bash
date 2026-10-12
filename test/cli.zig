@@ -276,6 +276,9 @@ test "JSON excerpts follow the per-stream options" {
 }
 
 test "a timeout kills the command and exits with 124" {
+    // Hangs on Windows until fb kills the whole command tree (#10).
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();
     var sandbox = try Sandbox.init(arena_state.allocator());
@@ -300,6 +303,9 @@ test "a timeout kills the command and exits with 124" {
 }
 
 test "oversized output kills the command unless the limit is disabled" {
+    // Hangs on Windows until fb kills the whole command tree (#10).
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();
     var sandbox = try Sandbox.init(arena_state.allocator());
